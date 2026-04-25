@@ -1,0 +1,310 @@
+package src
+
+import (
+	"fmt"
+	"strings"
+
+	pgq "github.com/pganalyze/pg_query_go/v6"
+
+	"github.com/nexg/pg-flux/pkg/schema"
+)
+
+func deparseOne(raw *pgq.RawStmt) (string, error) {
+	if raw == nil {
+		return "", fmt.Errorf("nil statement")
+	}
+	return pgq.Deparse(&pgq.ParseResult{Stmts: []*pgq.RawStmt{raw}})
+}
+
+// processExtraNode handles Index, Function, Policy DDL.
+func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions) error {
+	if raw == nil || raw.GetStmt() == nil {
+		return nil
+	}
+	switch n := raw.GetStmt().GetNode().(type) {
+	case *pgq.Node_IndexStmt:
+		return captureIndex(n.IndexStmt, raw, st)
+	case *pgq.Node_CreateFunctionStmt:
+		if err := captureFunction(n.CreateFunctionStmt, raw, st); err != nil {
+			return err
+		}
+		if opt.ValidatePlpgsql {
+			sql, e := deparseOne(raw)
+			if e != nil {
+				return e
+			}
+			if strings.Contains(strings.ToLower(sql), "language plpgsql") {
+				if e := CheckPlPgSqlSource(sql); e != nil {
+					return fmt.Errorf("plpgsql validation: %w", e)
+				}
+			}
+		}
+		return nil
+	case *pgq.Node_CreatePolicyStmt:
+		return capturePolicy(n.CreatePolicyStmt, raw, st)
+	case *pgq.Node_AlterPolicyStmt:
+		return captureAlterPolicy(n.AlterPolicyStmt, raw, st)
+	case *pgq.Node_CreateExtensionStmt:
+		return captureExtension(n.CreateExtensionStmt, raw, st)
+	case *pgq.Node_AlterExtensionStmt:
+		return captureAlterExtension(n.AlterExtensionStmt, raw, st)
+	case *pgq.Node_CreateForeignServerStmt:
+		return captureDeparsedMisc("FDW_SERVER", raw, st)
+	case *pgq.Node_CreateForeignTableStmt:
+		return captureDeparsedMisc("FOREIGN_TABLE", raw, st)
+	case *pgq.Node_CreatePublicationStmt:
+		return captureDeparsedMisc("PUBLICATION", raw, st)
+	// PRD v2 / V2-A: type and schema DDL must not be silently dropped (pass-through in plan order).
+	case *pgq.Node_DefineStmt, *pgq.Node_CreateDomainStmt, *pgq.Node_CompositeTypeStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
+		return captureDeparsedExtraDDL(raw, st)
+	default:
+		return nil
+	}
+}
+
+func captureDeparsedExtraDDL(raw *pgq.RawStmt, st *schema.SchemaState) error {
+	if raw == nil {
+		return nil
+	}
+	sql, err := deparseOne(raw)
+	if err != nil {
+		return err
+	}
+	s := strings.TrimSpace(sql)
+	if s == "" {
+		return nil
+	}
+	st.ExtraDDL = append(st.ExtraDDL, s)
+	return nil
+}
+
+func captureIndex(x *pgq.IndexStmt, raw *pgq.RawStmt, st *schema.SchemaState) error {
+	if x == nil {
+		return nil
+	}
+	sql, err := deparseOne(raw)
+	if err != nil {
+		return err
+	}
+	iname := strings.ToLower(x.GetIdxname())
+	r := x.GetRelation()
+	if r == nil {
+		return nil
+	}
+	sch := r.GetSchemaname()
+	if sch == "" {
+		sch = "public"
+	}
+	tbl := strings.ToLower(r.GetRelname())
+	key := schema.IndexKey(sch, iname)
+	ensureObjectMaps(st)
+	if st.Indexes[key] != nil {
+		return fmt.Errorf("duplicate index %q", key)
+	}
+	st.Indexes[key] = &schema.Index{
+		Schema:      sch,
+		Name:        iname,
+		TableSchema: sch,
+		Table:       tbl,
+		CreateSQL:   sql,
+		Concurrent:  x.GetConcurrent(),
+	}
+	return nil
+}
+
+func ensureObjectMaps(st *schema.SchemaState) {
+	if st.Indexes == nil {
+		st.Indexes = make(map[string]*schema.Index)
+	}
+	if st.Functions == nil {
+		st.Functions = make(map[string]*schema.Function)
+	}
+	if st.Policies == nil {
+		st.Policies = make(map[string]*schema.Policy)
+	}
+	if st.Extensions == nil {
+		st.Extensions = make(map[string]*schema.Extension)
+	}
+	ensureMoreMaps(st)
+}
+
+func captureFunction(x *pgq.CreateFunctionStmt, raw *pgq.RawStmt, st *schema.SchemaState) error {
+	if x == nil {
+		return nil
+	}
+	sql, err := deparseOne(raw)
+	if err != nil {
+		return err
+	}
+	schemaName, name := nameFromNameList(x.GetFuncname())
+	if name == "" {
+		return nil
+	}
+	identity := functionIdentityString(schemaName, x)
+	fp, _ := pgq.Fingerprint(strings.TrimSpace(sql))
+	ensureObjectMaps(st)
+	fk := schema.FunctionKey(identity)
+	if st.Functions[fk] != nil {
+		return fmt.Errorf("duplicate function %q", fk)
+	}
+	st.Functions[fk] = &schema.Function{
+		Schema:      schemaName,
+		Name:        name,
+		Language:    "sql",
+		Kind:        "f",
+		DefSQL:      sql,
+		Identity:    identity,
+		Fingerprint: fp,
+	}
+	return nil
+}
+
+func functionIdentityString(schemaName string, x *pgq.CreateFunctionStmt) string {
+	if schemaName == "" {
+		schemaName = "public"
+	}
+	var name string
+	if n := x.GetFuncname(); len(n) > 0 {
+		if s := n[len(n)-1].GetString_(); s != nil {
+			name = strings.ToLower(s.GetSval())
+		}
+	}
+	var atypes []string
+	for _, p := range x.GetParameters() {
+		if p == nil {
+			continue
+		}
+		if fp := p.GetFunctionParameter(); fp != nil {
+			if ts, e := typeNameToSQL(fp.GetArgType()); e == nil {
+				atypes = append(atypes, schema.NormalizeTypeForCompare(ts))
+			}
+		}
+	}
+	return schema.BuildFunctionIdentity(schemaName, name, strings.Join(atypes, ", "))
+}
+
+func nameFromNameList(nodes []*pgq.Node) (string, string) {
+	if len(nodes) == 0 {
+		return "public", ""
+	}
+	if len(nodes) == 1 {
+		if s := nodes[0].GetString_(); s != nil {
+			return "public", strings.ToLower(s.GetSval())
+		}
+		return "public", ""
+	}
+	schemaName := "public"
+	if s := nodes[0].GetString_(); s != nil {
+		schemaName = strings.ToLower(s.GetSval())
+	}
+	if s := nodes[len(nodes)-1].GetString_(); s != nil {
+		return schemaName, strings.ToLower(s.GetSval())
+	}
+	return "public", ""
+}
+
+func captureExtension(x *pgq.CreateExtensionStmt, raw *pgq.RawStmt, st *schema.SchemaState) error {
+	if x == nil {
+		return nil
+	}
+	name := strings.ToLower(strings.TrimSpace(x.GetExtname()))
+	if name == "" {
+		return nil
+	}
+	sql, err := deparseOne(raw)
+	if err != nil {
+		return err
+	}
+	ensureObjectMaps(st)
+	if st.Extensions == nil {
+		st.Extensions = make(map[string]*schema.Extension)
+	}
+	k := schema.ExtensionKey(name)
+	if st.Extensions[k] != nil {
+		return fmt.Errorf("duplicate extension %q", k)
+	}
+	ver := ExtensionVersionFromDefSQL(sql)
+	st.Extensions[k] = &schema.Extension{Name: name, DefSQL: sql, Version: ver}
+	return nil
+}
+
+func captureDeparsedMisc(kind string, raw *pgq.RawStmt, st *schema.SchemaState) error {
+	sql, err := deparseOne(raw)
+	if err != nil {
+		return err
+	}
+	st.MiscObjects = append(st.MiscObjects, &schema.MiscObject{Kind: kind, DefSQL: sql, Name: kind})
+	return nil
+}
+
+func capturePolicy(x *pgq.CreatePolicyStmt, raw *pgq.RawStmt, st *schema.SchemaState) error {
+	if x == nil || x.GetTable() == nil {
+		return nil
+	}
+	sql, err := deparseOne(raw)
+	if err != nil {
+		return err
+	}
+	tb := x.GetTable()
+	sch := tb.GetSchemaname()
+	if sch == "" {
+		sch = "public"
+	}
+	rel := strings.ToLower(tb.GetRelname())
+	pn := x.GetPolicyName()
+	ensureObjectMaps(st)
+	k := schema.PolicyKey(sch, rel, pn)
+	if st.Policies[k] != nil {
+		return fmt.Errorf("duplicate policy %q", k)
+	}
+	pol := &schema.Policy{
+		Schema:     sch,
+		Table:      rel,
+		Name:       pn,
+		Cmd:        x.GetCmdName(),
+		DefSQL:     sql,
+		Permissive: x.GetPermissive(),
+	}
+	pol.Roles = policyRolesFromNodes(x.GetRoles())
+	st.Policies[k] = pol
+	_ = raw
+	return nil
+}
+
+func captureAlterPolicy(x *pgq.AlterPolicyStmt, raw *pgq.RawStmt, st *schema.SchemaState) error {
+	if x == nil || x.GetTable() == nil {
+		return nil
+	}
+	sql, err := deparseOne(raw)
+	if err != nil {
+		return err
+	}
+	tb := x.GetTable()
+	sch := tb.GetSchemaname()
+	if sch == "" {
+		sch = "public"
+	}
+	rel := strings.ToLower(tb.GetRelname())
+	pn := x.GetPolicyName()
+	ensureObjectMaps(st)
+	k := schema.PolicyKey(sch, rel, pn)
+	prev := st.Policies[k]
+	if prev == nil {
+		return fmt.Errorf("ALTER POLICY %q: no prior CREATE POLICY in loaded schema; define CREATE POLICY first", k)
+	}
+	prev.DefSQL = sql
+	if x.GetQual() != nil {
+		if u, e := deparseExprToSQL(x.GetQual()); e == nil {
+			prev.UsingSQL = u
+		}
+	}
+	if x.GetWithCheck() != nil {
+		if w, e := deparseExprToSQL(x.GetWithCheck()); e == nil {
+			prev.WithCheck = w
+		}
+	}
+	if r := policyRolesFromNodes(x.GetRoles()); len(r) > 0 {
+		prev.Roles = r
+	}
+	return nil
+}

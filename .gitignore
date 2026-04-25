@@ -1,0 +1,27 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/pg-flux
+bin/
+dist/
+
+# Test
+*.test
+profile.out
+*.cpu
+
+# Coverage
+coverage.out
+*.coverprofile
+coverage.html
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+.env
+.env.*
