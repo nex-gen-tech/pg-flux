@@ -95,15 +95,17 @@ func diffIndexes(d, l *schema.SchemaState, tableColRenames map[string]map[string
 			continue
 		}
 		li := l.Indexes[k]
+		// Determine whether the index's table is partitioned (CONCURRENTLY not supported).
+		tblKey := schema.TableKey(di.TableSchema, di.Table)
+		isPartitioned := d.Tables != nil && d.Tables[tblKey] != nil && d.Tables[tblKey].PartitionBy != ""
 		if li == nil {
-			out = append(out, change{kind: plan.ChangeCreateIndex, idx: di})
+			out = append(out, change{kind: plan.ChangeCreateIndex, idx: di, skipConcurrent: isPartitioned})
 			continue
 		}
-		tblKey := schema.TableKey(li.TableSchema, li.Table)
 		renames := tableColRenames[tblKey]
 		if !indexDefsEqualWithRenames(di, li, renames) {
 			out = append(out, change{kind: plan.ChangeDropIndex, dropIdx: k, sch: li.Schema, ixName: li.Name})
-			out = append(out, change{kind: plan.ChangeCreateIndex, idx: di})
+			out = append(out, change{kind: plan.ChangeCreateIndex, idx: di, skipConcurrent: isPartitioned})
 		}
 	}
 	for k, li := range l.Indexes {
@@ -260,6 +262,9 @@ func indexFingerprintNormalizers(s string, tableSchema string) string {
 	s = strings.ReplaceAll(s, "concurrently", "")
 	// pg_get_indexdef never includes IF NOT EXISTS; strip it for comparison.
 	s = strings.ReplaceAll(s, "if not exists", "")
+	// pg_get_indexdef uses "ON ONLY" for indexes on partitioned table parents;
+	// source SQL omits "ONLY". Normalize both to "ON".
+	s = strings.ReplaceAll(s, " on only ", " on ")
 	ts := strings.TrimSpace(strings.ToLower(tableSchema))
 	if ts != "" {
 		s = strings.ReplaceAll(s, "on "+ts+".", "on ")

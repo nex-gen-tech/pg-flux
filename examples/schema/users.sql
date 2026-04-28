@@ -19,6 +19,8 @@ CREATE TABLE public.users (
   updated_at  timestamptz     NOT NULL DEFAULT now(),
   -- Issue 8 test: integer column with CHECK constraint (PG adds ::integer cast in catalog)
   test_score  integer         DEFAULT 0,
+  -- Issue 2 (generated col): stored generated column — full_name uppercased for search
+  search_name text            GENERATED ALWAYS AS (upper(coalesce(full_name, handle))) STORED,
 
   CONSTRAINT users_email_unique    UNIQUE (email),
   CONSTRAINT users_handle_unique   UNIQUE (handle),

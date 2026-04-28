@@ -26,6 +26,10 @@ type SchemaState struct {
 	// PendingAlterPolicy holds ALTER POLICY statements that arrived before their CREATE POLICY
 	// (cross-file ordering). Applied as a post-processing step in LoadDesiredState.
 	PendingAlterPolicy []*PendingAlterPol
+	// PartitionChildren is the set of live partition child table keys ("schema.name").
+	// Populated by the inspector so diffExtraDDL can skip CREATE TABLE IF NOT EXISTS
+	// for partition children that already exist.
+	PartitionChildren map[string]bool
 	// ExtraDDL holds pass-through statements (e.g. ALTER TABLE … ATTACH PARTITION) kept in order.
 	ExtraDDL []string
 	// MiscObjects lists recognized but not fully modeled objects (FDW, event triggers, etc.).
@@ -67,6 +71,9 @@ type Table struct {
 	RLSForced      bool
 	Comment        string
 	PrimaryKeyCols []string
+	// PartitionBy holds the partition strategy and key (e.g. "RANGE (ts)") for
+	// partitioned tables. Empty for regular tables.
+	PartitionBy string
 	// Table-level CHECK / UNIQUE / EXCLUDE / FK
 	Checks      []*TableCheck
 	Uniques     []*TableUnique
@@ -84,6 +91,9 @@ type Column struct {
 	DefaultSQL   string
 	IsPrimaryKey bool
 	Collation    string
+	// GeneratedExpr is non-empty for stored generated columns:
+	// the expression text (without GENERATED ALWAYS AS and STORED wrapper).
+	GeneratedExpr string
 }
 
 // Clone returns a deep copy of SchemaState.
@@ -142,6 +152,7 @@ func (s *SchemaState) Clone() *SchemaState {
 		nt := &Table{
 			Schema: t.Schema, Name: t.Name, OldName: t.OldName, Deprecated: t.Deprecated,
 			RLSEnabled: t.RLSEnabled, RLSForced: t.RLSForced, Comment: t.Comment,
+			PartitionBy: t.PartitionBy,
 		}
 		nt.PrimaryKeyCols = append([]string(nil), t.PrimaryKeyCols...)
 		for _, x := range t.Checks {

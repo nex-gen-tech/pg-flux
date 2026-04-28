@@ -196,9 +196,10 @@ type change struct {
 	alterKind               string // type, notnull, def
 	wantRls, wantForce, had bool
 	// index / function / policy
-	idx     *schema.Index
-	dropIdx string
-	ixName  string
+	idx            *schema.Index
+	dropIdx        string
+	ixName         string
+	skipConcurrent bool // true when table is partitioned (CONCURRENTLY not supported)
 	fn      *schema.Function
 	dropFn  string
 	pol     *schema.Policy
@@ -287,7 +288,14 @@ func diffColumns(dt, lt *schema.Table, dKey string) ([]change, error) {
 			continue
 		}
 		used[c.Name] = true
-		out = append(out, altersFor(dt.Schema, dt.Name, c, exists)...)
+		// Changing between generated and non-generated requires DROP + ADD (PostgreSQL
+		// does not support ALTER COLUMN SET GENERATED or STORED removal).
+		if normDef(c.GeneratedExpr) != normDef(exists.GeneratedExpr) {
+			out = append(out, change{kind: plan.ChangeDropColumn, sch: dt.Schema, tbl: dt.Name, col: exists.Name, lc: exists})
+			out = append(out, change{kind: plan.ChangeAddColumn, sch: dt.Schema, tbl: dt.Name, col: c.Name, dc: c})
+		} else {
+			out = append(out, altersFor(dt.Schema, dt.Name, c, exists)...)
+		}
 	}
 	for n, oc := range byName {
 		if !used[n] {
@@ -306,6 +314,14 @@ func colDiff(a, b *schema.Column) bool {
 	}
 	if a.NotNull != b.NotNull {
 		return true
+	}
+	// Generated expression takes priority — compare it before DefaultSQL.
+	if normDef(a.GeneratedExpr) != normDef(b.GeneratedExpr) {
+		return true
+	}
+	if a.GeneratedExpr != "" {
+		// Both have matching generated expressions; skip DefaultSQL comparison.
+		return false
 	}
 	if normDef(a.DefaultSQL) != normDef(b.DefaultSQL) {
 		// If one side has no default and the other is an implicit serial nextval
@@ -392,11 +408,15 @@ func stmtFor(c change, opt Options) []plan.Statement {
 	case plan.ChangeAddColumn:
 		dc := c.dc
 		ddl := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", qt(c.sch, c.tbl), ident(c.col), dc.TypeSQL)
-		if dc.NotNull {
-			ddl += " NOT NULL"
-		}
-		if dc.DefaultSQL != "" {
-			ddl += " DEFAULT " + dc.DefaultSQL
+		if dc.GeneratedExpr != "" {
+			ddl += fmt.Sprintf(" GENERATED ALWAYS AS (%s) STORED", dc.GeneratedExpr)
+		} else {
+			if dc.NotNull {
+				ddl += " NOT NULL"
+			}
+			if dc.DefaultSQL != "" {
+				ddl += " DEFAULT " + dc.DefaultSQL
+			}
 		}
 		return []plan.Statement{{OpType: string(c.kind), DDL: ddl, Object: schema.TableKey(c.sch, c.tbl) + "." + c.col}}
 	case plan.ChangeDropColumn:
@@ -428,11 +448,15 @@ func stmtFor(c change, opt Options) []plan.Statement {
 			return nil
 		}
 		ddl := rewriteIndexConcurrent(c.idx.CreateSQL)
+		// Partitioned tables do not support CONCURRENTLY; strip it.
+		if c.skipConcurrent {
+			ddl = strings.ReplaceAll(ddl, " CONCURRENTLY", "")
+		}
 		st := plan.Statement{
 			OpType:       string(c.kind),
 			DDL:          ddl,
 			Object:       schema.IndexKey(c.idx.Schema, c.idx.Name),
-			IsConcurrent: strings.Contains(strings.ToUpper(ddl), "CONCURRENTLY"),
+			IsConcurrent: !c.skipConcurrent && strings.Contains(strings.ToUpper(ddl), "CONCURRENTLY"),
 			Hazards:      []hazard.Detected{{Type: hazard.IndexRebuild, Severity: hazard.SeverityAdvisory, Message: "Index build (concurrent) may affect I/O"}},
 		}
 		return []plan.Statement{st}
@@ -673,7 +697,9 @@ func createTableSQL(t *schema.Table) string {
 			b.WriteString(",\n")
 		}
 		fmt.Fprintf(&b, "  %s %s", ident(c.Name), c.TypeSQL)
-		if c.DefaultSQL != "" {
+		if c.GeneratedExpr != "" {
+			fmt.Fprintf(&b, " GENERATED ALWAYS AS (%s) STORED", c.GeneratedExpr)
+		} else if c.DefaultSQL != "" {
 			fmt.Fprintf(&b, " DEFAULT %s", c.DefaultSQL)
 		}
 		if c.IsPrimaryKey {
@@ -706,7 +732,19 @@ func createTableSQL(t *schema.Table) string {
 		}
 		fmt.Fprintf(&b, ",\n  CONSTRAINT %s %s", ident(fk.Name), fk.DefSQL)
 	}
-	b.WriteString("\n);")
+	// Multi-column primary key stored at table level (not inline on a single column).
+	if len(t.PrimaryKeyCols) > 0 {
+		cols := make([]string, len(t.PrimaryKeyCols))
+		for i, c := range t.PrimaryKeyCols {
+			cols[i] = ident(c)
+		}
+		fmt.Fprintf(&b, ",\n  PRIMARY KEY (%s)", strings.Join(cols, ", "))
+	}
+	b.WriteString("\n)")
+	if t.PartitionBy != "" {
+		fmt.Fprintf(&b, " PARTITION BY %s", t.PartitionBy)
+	}
+	b.WriteString(";")
 	return b.String()
 }
 

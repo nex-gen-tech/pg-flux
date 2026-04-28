@@ -13,6 +13,7 @@ var createOrder = map[string]int{
 	"CREATE_TYPE":               1,
 	"CREATE_DOMAIN":             1,
 	"CREATE_TABLE":              2,
+	"DROP_COLUMN":               2, // must precede ADD_COLUMN so plain→generated replacement order is correct
 	"ADD_COLUMN":                3,
 	"CREATE_FUNCTION":           7,
 	"TOGGLE_RLS":                8,

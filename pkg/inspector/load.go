@@ -137,16 +137,24 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	}
 	st.UserTypes = utm
 	st.EnumValues = enumVals
+	// Load partition children so diffExtraDDL can skip them if they already exist.
+	pc, err := loadPartitionChildren(ctx, pool, schemas)
+	if err != nil {
+		return nil, err
+	}
+	st.PartitionChildren = pc
 	return st, nil
 }
 
 func loadTablesMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (map[string]*schema.Table, error) {
 	out := make(map[string]*schema.Table)
 	rows, err := pool.Query(ctx, `
-		SELECT c.oid, n.nspname, c.relname, c.relrowsecurity, c.relforcerowsecurity
+		SELECT c.oid, n.nspname, c.relname, c.relrowsecurity, c.relforcerowsecurity,
+		       c.relkind::text
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE c.relkind IN ('r', 'p') AND n.nspname = ANY($1)
+		  AND c.relispartition = false
 		ORDER BY n.nspname, c.relname
 	`, schemas)
 	if err != nil {
@@ -157,7 +165,8 @@ func loadTablesMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 		var oid uint32
 		var nsp, rel string
 		var rls, rlsf bool
-		if err := rows.Scan(&oid, &nsp, &rel, &rls, &rlsf); err != nil {
+		var relkind string
+		if err := rows.Scan(&oid, &nsp, &rel, &rls, &rlsf, &relkind); err != nil {
 			return nil, err
 		}
 		key := schema.TableKey(nsp, rel)
@@ -167,6 +176,13 @@ func loadTablesMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 			RLSEnabled: rls,
 			RLSForced:  rlsf,
 		}
+		// For partitioned tables (relkind='p'), load the partition key definition.
+		if relkind == "p" {
+			var partKey string
+			if err := pool.QueryRow(ctx, `SELECT pg_get_partkeydef($1)`, oid).Scan(&partKey); err == nil {
+				tab.PartitionBy = partKey
+			}
+		}
 		if err := fillColumns(ctx, pool, oid, tab); err != nil {
 			return nil, err
 		}
@@ -174,6 +190,31 @@ func loadTablesMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 			return nil, err
 		}
 		out[key] = tab
+	}
+	return out, rows.Err()
+}
+
+// loadPartitionChildren returns a set of "schema.table" keys for all partition child tables
+// in the given schemas. Used by diffExtraDDL to skip emitting CREATE TABLE IF NOT EXISTS
+// for partition children that already exist in the live DB.
+func loadPartitionChildren(ctx context.Context, pool *pgxpool.Pool, schemas []string) (map[string]bool, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT n.nspname, c.relname
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relispartition = true AND n.nspname = ANY($1)
+	`, schemas)
+	if err != nil {
+		return nil, fmt.Errorf("query partition children: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var nsp, rel string
+		if err := rows.Scan(&nsp, &rel); err != nil {
+			return nil, err
+		}
+		out[schema.TableKey(nsp, strings.ToLower(rel))] = true
 	}
 	return out, rows.Err()
 }
@@ -189,6 +230,7 @@ func loadIndexMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (ma
 		JOIN pg_class t ON t.oid = i.indrelid
 		JOIN pg_namespace nt ON nt.oid = t.relnamespace
 		WHERE n.nspname = ANY($1) AND NOT i.indisprimary
+		  AND t.relispartition = false
 		  AND NOT EXISTS (
 			SELECT 1 FROM pg_constraint c
 			WHERE c.conrelid = t.oid

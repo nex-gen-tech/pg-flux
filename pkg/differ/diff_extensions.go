@@ -17,6 +17,8 @@ var (
 	// CREATE TYPE / CREATE DOMAIN  — no native IF NOT EXISTS; wrap in a DO block.
 	reCreateType   = regexp.MustCompile(`(?i)^CREATE\s+TYPE\s+`)
 	reCreateDomain = regexp.MustCompile(`(?i)^CREATE\s+DOMAIN\s+`)
+	// CREATE TABLE ... PARTITION OF  — use IF NOT EXISTS for idempotency.
+	reCreateTablePartOf = regexp.MustCompile(`(?i)^(CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?(\S+\s+PARTITION\s+OF\s+.*)`)
 )
 
 // makeExtraDDLIdempotent rewrites a single ExtraDDL statement to be safe to
@@ -37,6 +39,10 @@ func makeExtraDDLIdempotent(sql string) string {
 	}
 	// ALTER TYPE ... ADD VALUE IF NOT EXISTS
 	if m := reAlterTypeAddValue.FindStringSubmatch(s); len(m) == 3 {
+		return m[1] + "IF NOT EXISTS " + m[2]
+	}
+	// CREATE TABLE ... PARTITION OF → CREATE TABLE IF NOT EXISTS ... PARTITION OF
+	if m := reCreateTablePartOf.FindStringSubmatch(s); len(m) == 3 {
 		return m[1] + "IF NOT EXISTS " + m[2]
 	}
 	// CREATE TYPE / CREATE DOMAIN: wrap in DO block for idempotency.
@@ -114,6 +120,9 @@ func parseEnumValues(list string) []string {
 
 var reExtractTypeName = regexp.MustCompile(`(?i)^CREATE\s+(?:TYPE|DOMAIN)\s+(?:(\w+)\.)?(\w+)`)
 
+// reExtractTableName extracts the schema-qualified table name from a CREATE TABLE statement.
+var reExtractTableName = regexp.MustCompile(`(?i)^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(\w+)\.)?(\w+)`)
+
 func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 	if d == nil || len(d.ExtraDDL) == 0 {
 		return nil
@@ -123,6 +132,21 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 		s := strings.TrimSpace(sql)
 		if s == "" {
 			continue
+		}
+		// Skip CREATE TABLE ... PARTITION OF when the partition child already exists.
+		if reCreateTablePartOf.MatchString(s) {
+			if live != nil && len(live.PartitionChildren) > 0 {
+				if m := reExtractTableName.FindStringSubmatch(s); len(m) == 3 {
+					ns := m[1]
+					if ns == "" {
+						ns = "public"
+					}
+					key := strings.ToLower(ns) + "." + strings.ToLower(m[2])
+					if live.PartitionChildren[key] {
+						continue // partition child already exists, skip
+					}
+				}
+			}
 		}
 		idempotent := makeExtraDDLIdempotent(s)
 		// Give CREATE TYPE / CREATE DOMAIN the correct op-score so they sort

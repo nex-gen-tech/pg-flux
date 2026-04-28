@@ -15,7 +15,8 @@ func fillColumns(ctx context.Context, pool *pgxpool.Pool, tableOID uint32, t *sc
 			a.attname,
 			pg_catalog.format_type(a.atttypid, a.atttypmod),
 			a.attnotnull,
-			coalesce(pg_get_expr(ad.adbin, ad.adrelid), '') AS def
+			coalesce(pg_get_expr(ad.adbin, ad.adrelid), '') AS def,
+			a.attgenerated::text
 		FROM pg_attribute a
 		LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
 		WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped
@@ -26,16 +27,21 @@ func fillColumns(ctx context.Context, pool *pgxpool.Pool, tableOID uint32, t *sc
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var name, typ, def string
+		var name, typ, def, attgenerated string
 		var notnull bool
-		if err := rows.Scan(&name, &typ, &notnull, &def); err != nil {
+		if err := rows.Scan(&name, &typ, &notnull, &def, &attgenerated); err != nil {
 			return err
 		}
 		c := &schema.Column{
-			Name:       strings.ToLower(name),
-			TypeSQL:    typ,
-			NotNull:    notnull,
-			DefaultSQL: strings.TrimSpace(def),
+			Name:    strings.ToLower(name),
+			TypeSQL: typ,
+			NotNull: notnull,
+		}
+		if attgenerated == "s" {
+			// Stored generated column: the catalog stores the expression in pg_attrdef.
+			c.GeneratedExpr = strings.TrimSpace(def)
+		} else {
+			c.DefaultSQL = strings.TrimSpace(def)
 		}
 		t.Columns = append(t.Columns, c)
 	}

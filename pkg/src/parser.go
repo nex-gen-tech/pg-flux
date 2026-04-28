@@ -268,6 +268,13 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 						cn := strings.ToLower(t.Name) + "_" + strings.ToLower(col.Name) + "_fkey"
 						def := buildInlineForeignKeySQL(col.Name, cc)
 						t.ForeignKeys = append(t.ForeignKeys, &schema.TableForeignKey{Name: cn, DefSQL: def})
+					case pgq.ConstrType_CONSTR_GENERATED:
+						// GENERATED ALWAYS AS (expr) STORED — capture the expression.
+						if cc.GetRawExpr() != nil {
+							if genExpr, err := deparseExprToSQL(cc.GetRawExpr()); err == nil {
+								col.GeneratedExpr = strings.TrimSpace(genExpr)
+							}
+						}
 					}
 				}
 			}
@@ -306,6 +313,15 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 	}
 	if full, e := deparseOne(raw); e == nil {
 		t.RLSEnabled, t.RLSForced = rlsFromCreateTableDeparse(full)
+		// Extract PARTITION BY clause (e.g. "RANGE (ts)") for partitioned tables.
+		if cs.GetPartspec() != nil {
+			upper := strings.ToUpper(full)
+			if idx := strings.Index(upper, "PARTITION BY "); idx >= 0 {
+				spec := strings.TrimSpace(full[idx+len("PARTITION BY "):])
+				spec = strings.TrimSuffix(spec, ";")
+				t.PartitionBy = strings.TrimSpace(spec)
+			}
+		}
 	}
 	st.Tables[key] = t
 	return nil
