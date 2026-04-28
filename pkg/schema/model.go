@@ -98,6 +98,11 @@ type Column struct {
 	// GeneratedExpr is non-empty for stored generated columns:
 	// the expression text (without GENERATED ALWAYS AS and STORED wrapper).
 	GeneratedExpr string
+	// CustomUsing holds the USING expression override for ALTER COLUMN TYPE, provided via
+	// a "-- @using <expr>" comment immediately preceding the column definition. When set,
+	// this expression replaces the default "col::newtype" USING clause so incompatible
+	// casts (e.g. boolean → enum) can be handled with a user-supplied CASE expression.
+	CustomUsing string
 }
 
 // Clone returns a deep copy of SchemaState.
@@ -147,6 +152,44 @@ func (s *SchemaState) Clone() *SchemaState {
 		out.EnumValues = make(map[string][]string, len(s.EnumValues))
 		for k, v := range s.EnumValues {
 			out.EnumValues[k] = append([]string(nil), v...)
+		}
+	}
+	if len(s.PendingRLS) > 0 {
+		out.PendingRLS = make(map[string]*RLSFlags, len(s.PendingRLS))
+		for k, v := range s.PendingRLS {
+			if v == nil {
+				continue
+			}
+			vc := *v
+			out.PendingRLS[k] = &vc
+		}
+	}
+	if len(s.PendingAlterPolicy) > 0 {
+		out.PendingAlterPolicy = make([]*PendingAlterPol, len(s.PendingAlterPolicy))
+		for i, p := range s.PendingAlterPolicy {
+			if p == nil {
+				continue
+			}
+			pc := *p
+			pc.Roles = append([]string(nil), p.Roles...)
+			out.PendingAlterPolicy[i] = &pc
+		}
+	}
+	if len(s.PartitionChildren) > 0 {
+		out.PartitionChildren = make(map[string]bool, len(s.PartitionChildren))
+		for k, v := range s.PartitionChildren {
+			out.PartitionChildren[k] = v
+		}
+	}
+	if len(s.Domains) > 0 {
+		out.Domains = make(map[string]*Domain, len(s.Domains))
+		for k, d := range s.Domains {
+			if d == nil {
+				continue
+			}
+			dc := *d
+			dc.Constraints = append([]DomainConstraint(nil), d.Constraints...)
+			out.Domains[k] = &dc
 		}
 	}
 	for k, t := range s.Tables {

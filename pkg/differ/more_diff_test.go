@@ -405,8 +405,10 @@ func TestDiff_createExtension(t *testing.T) {
 }
 
 func TestDiff_dropExtension(t *testing.T) {
-	// diffExtensions only auto-drops if the desired state has a non-nil Extensions map
-	// (i.e., the schema explicitly manages extensions) but omits the extension.
+	// diffExtensions no longer auto-drops live extensions that are absent from the desired
+	// schema — those could be DBA-managed extensions. Only extensions whose DefSQL
+	// changes trigger a DROP+CREATE (handled separately). A live-only extension
+	// (in live but not in desired at all) should be left alone.
 	des := &schema.SchemaState{
 		Extensions: map[string]*schema.Extension{}, // empty but non-nil = manage extensions
 	}
@@ -417,13 +419,10 @@ func TestDiff_dropExtension(t *testing.T) {
 	}
 	dr, err := Diff(des, live, Options{})
 	require.NoError(t, err)
-	var saw bool
 	for _, s := range dr.Plan.Statements {
-		if s.OpType == string(plan.ChangeDropExtension) {
-			saw = true
-		}
+		require.NotEqual(t, string(plan.ChangeDropExtension), s.OpType,
+			"should not auto-drop unmanaged live extension")
 	}
-	require.True(t, saw, "expected DROP_EXTENSION statement")
 }
 
 // ---- diffIndexes extra paths ----

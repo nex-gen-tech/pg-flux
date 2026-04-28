@@ -239,8 +239,12 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 			loc := int(cd.GetLocation())
 			cline := lineIndex0ForByte(content, loc)
 			if p := previousNonEmptyLineIndex(lines, cline); p >= 0 {
-				if from, ok := extractRenameFromComment(lineByIndex0(lines, p)); ok {
+				commentLine := lineByIndex0(lines, p)
+				if from, ok := extractRenameFromComment(commentLine); ok {
 					col.RenameFrom = from
+				}
+				if usingExpr, ok := extractUsingComment(commentLine); ok {
+					col.CustomUsing = usingExpr
 				}
 			}
 			for _, c := range cd.GetConstraints() {

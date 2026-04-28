@@ -153,9 +153,33 @@ func injectViewRefreshForTypeChanges(changes []change, desired, live *schema.Sch
 		}
 		for tk := range typeChangedTables {
 			parts := strings.SplitN(tk, ".", 2)
+			tblSchema := parts[0]
 			tblName := parts[len(parts)-1]
-			re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblName) + `\b`)
-			if re.MatchString(dv.DefSQL) {
+			// Match schema.tablename or just tablename, avoiding false positives on bare names.
+			reQual := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblSchema) + `\s*\.\s*` + regexp.QuoteMeta(tblName) + `\b`)
+			reBare := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblName) + `\b`)
+			if reQual.MatchString(dv.DefSQL) || reBare.MatchString(dv.DefSQL) {
+				needsEarlyDrop[vk] = true
+				break
+			}
+		}
+	}
+	// Also scan live-only views (being dropped) that reference type-changed tables —
+	// PostgreSQL still requires them to be dropped before ALTER COLUMN TYPE.
+	for vk, lv := range live.Views {
+		if lv == nil {
+			continue
+		}
+		if desired.Views[vk] != nil {
+			continue // already handled above
+		}
+		for tk := range typeChangedTables {
+			parts := strings.SplitN(tk, ".", 2)
+			tblSchema := parts[0]
+			tblName := parts[len(parts)-1]
+			reQual := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblSchema) + `\s*\.\s*` + regexp.QuoteMeta(tblName) + `\b`)
+			reBare := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblName) + `\b`)
+			if reQual.MatchString(lv.DefSQL) || reBare.MatchString(lv.DefSQL) {
 				needsEarlyDrop[vk] = true
 				break
 			}
@@ -249,8 +273,14 @@ func diffSequences(d, l *schema.SchemaState) []change {
 			continue
 		}
 		if !seqParamsEqual(ds.DefSQL, ls.DefSQL) {
-			out = append(out, change{kind: plan.ChangeDropSequence, seq: ls, dropSeq: k})
-			out = append(out, change{kind: plan.ChangeCreateSequence, seq: ds})
+			// Emit ALTER SEQUENCE instead of DROP+CREATE to preserve the current value.
+			if ddl := buildAlterSequenceSQL(ds); ddl != "" {
+				out = append(out, change{kind: plan.ChangeRawSQL, rawSQL: ddl})
+			} else {
+				// Fallback: cannot parse params; use DROP+CREATE (destructive but rare).
+				out = append(out, change{kind: plan.ChangeDropSequence, seq: ls, dropSeq: k})
+				out = append(out, change{kind: plan.ChangeCreateSequence, seq: ds})
+			}
 		}
 	}
 	for k, ls := range l.Sequences {

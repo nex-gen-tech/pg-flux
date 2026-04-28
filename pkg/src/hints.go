@@ -7,6 +7,7 @@ import (
 )
 
 var reRenameFrom = regexp.MustCompile(`^\s*--\s*@renamed\s+from\s*=\s*(.+?)\s*$`)
+var reUsingHint = regexp.MustCompile(`(?i)^\s*--\s*@using\s+(.+?)\s*$`)
 
 func extractRenameFromComment(line string) (string, bool) {
 	if m := reRenameFrom.FindStringSubmatch(line); m != nil {
@@ -15,6 +16,17 @@ func extractRenameFromComment(line string) (string, bool) {
 			return "", false
 		}
 		return id, true
+	}
+	return "", false
+}
+
+// extractUsingComment extracts the USING expression from a "-- @using <expr>" comment.
+func extractUsingComment(line string) (string, bool) {
+	if m := reUsingHint.FindStringSubmatch(line); m != nil {
+		expr := strings.TrimSpace(m[1])
+		if expr != "" {
+			return expr, true
+		}
 	}
 	return "", false
 }

@@ -5,6 +5,8 @@ CREATE DOMAIN public.email_address AS text
 
 CREATE TYPE public.user_status AS ENUM ('active', 'suspended', 'deleted', 'pending_review');
 
+CREATE TYPE public.verification_status AS ENUM ('unverified', 'verified', 'pending');
+
 CREATE TABLE public.users (
   id          bigserial       PRIMARY KEY,
   email       varchar(254)    NOT NULL,
@@ -13,7 +15,8 @@ CREATE TABLE public.users (
   full_name   varchar(100),
   -- @renamed from=nickname
   screen_name text,
-  is_verified boolean            NOT NULL DEFAULT false,
+  -- @using CASE is_verified WHEN TRUE THEN 'verified'::public.verification_status ELSE 'unverified'::public.verification_status END
+  is_verified public.verification_status NOT NULL DEFAULT 'unverified',
   phone       text               NOT NULL,
   status      public.user_status NOT NULL,
   created_at  timestamptz     NOT NULL DEFAULT now(),

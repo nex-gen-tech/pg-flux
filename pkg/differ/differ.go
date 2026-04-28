@@ -3,7 +3,6 @@ package differ
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/nexg/pg-flux/pkg/dag"
@@ -79,12 +78,6 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 		}
 		lk, hasMapping := liveKeyFor[dKey]
 		if hasChange(changes, dKey, plan.ChangeCreateTable) {
-			// For brand-new tables that have RLS enabled or forced in the source schema,
-			// we must emit TOGGLE_RLS after CREATE_TABLE — PostgreSQL creates tables with
-			// RLS disabled by default.
-			if dt.RLSEnabled || dt.RLSForced {
-				changes = append(changes, change{kind: plan.ChangeToggleRLS, sch: dt.Schema, tbl: dt.Name, wantRls: dt.RLSEnabled, wantForce: dt.RLSForced, had: false})
-			}
 			// For brand-new tables that have RLS enabled or forced in the source schema,
 			// we must emit TOGGLE_RLS after CREATE_TABLE — PostgreSQL creates tables with
 			// RLS disabled by default.
@@ -449,9 +442,6 @@ func buildStatements(ch []change, _ *schema.SchemaState, _ *schema.SchemaState, 
 	for _, c := range ch {
 		st = append(st, stmtFor(c, opt)...)
 	}
-	sort.SliceStable(st, func(i, j int) bool {
-		return st[i].DDL < st[j].DDL
-	})
 	return st
 }
 
@@ -489,9 +479,9 @@ func stmtFor(c change, opt Options) []plan.Statement {
 		}
 		return []plan.Statement{{OpType: string(c.kind), DDL: ddl, Object: schema.TableKey(c.sch, c.tbl) + "." + c.col}}
 	case plan.ChangeDropColumn:
-		ddl := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", qt(c.sch, c.tbl), ident(c.col))
+		ddl := fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s CASCADE", qt(c.sch, c.tbl), ident(c.col))
 		return []plan.Statement{{
-			OpType: string(c.kind), DDL: ddl,
+			OpType: string(c.kind), DDL: ddl, Object: schema.TableKey(c.sch, c.tbl) + "." + c.col,
 			Hazards: []hazard.Detected{{Type: hazard.DataLoss, Severity: hazard.SeverityBlocking, Message: "Drops column data"}},
 		}}
 	case plan.ChangeRenameColumn:
@@ -606,7 +596,11 @@ func stmtFor(c change, opt Options) []plan.Statement {
 		if c.v == nil {
 			return nil
 		}
-		return []plan.Statement{{OpType: string(c.kind), DDL: c.v.DefSQL, Object: schema.ViewKey(c.v.Schema, c.v.Name)}}
+		opType := string(c.kind)
+		if c.v.Materialized {
+			opType = "CREATE_MATERIALIZED_VIEW"
+		}
+		return []plan.Statement{{OpType: opType, DDL: c.v.DefSQL, Object: schema.ViewKey(c.v.Schema, c.v.Name)}}
 	case plan.ChangeDropView, plan.ChangeDropViewEarly:
 		if c.v == nil {
 			return nil
@@ -683,8 +677,17 @@ func stmtFor(c change, opt Options) []plan.Statement {
 		if strings.TrimSpace(c.rawSQL) == "" {
 			return nil
 		}
+		// Extract the type/domain name for the Object field (for plan output / logs).
+		obj := "raw"
+		if m := reExtractTypeName.FindStringSubmatch(c.rawSQL); len(m) == 3 {
+			ns := m[1]
+			if ns == "" {
+				ns = "public"
+			}
+			obj = ns + "." + strings.ToLower(m[2])
+		}
 		return []plan.Statement{{
-			OpType: string(c.kind), DDL: c.rawSQL, Object: "raw",
+			OpType: string(c.kind), DDL: c.rawSQL, Object: obj,
 		}}
 	case plan.ChangeRawSQL:
 		// A ChangeRawSQL with empty SQL but extraHazards is a pure advisory notice.
@@ -738,14 +741,31 @@ func alterStmt(c change) []plan.Statement {
 	}
 	switch c.alterKind {
 	case "type":
-		// Always emit an explicit USING clause so type changes with no implicit cast
-		// fail with a clear error (rather than a cryptic internal error), and so that
-		// common widening casts (int→bigint, varchar→text) are handled correctly.
-		ddl := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET DATA TYPE %s USING %s::%s",
-			ident(c.sch), ident(c.tbl), ident(c.col), w.TypeSQL, ident(c.col), w.TypeSQL)
+		// Use the column's @using annotation when provided (required for incompatible casts
+		// like boolean→enum where no implicit cast path exists).
+		// Fall back to "col::newtype" for common widening casts (int→bigint, varchar→text).
+		usingExpr := ident(c.col) + "::" + w.TypeSQL
+		if w.CustomUsing != "" {
+			usingExpr = w.CustomUsing
+		}
+		// If the live column has a non-serial default, PostgreSQL will refuse to change the
+		// type because it cannot implicitly cast the default expression.  Drop the default
+		// first; the "def" alter emitted by altersFor will reinstate it afterwards.
+		if c.lc != nil && c.lc.DefaultSQL != "" && !strings.HasPrefix(normDef(c.lc.DefaultSQL), "nextval(") {
+			dropDef := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s DROP DEFAULT",
+				ident(c.sch), ident(c.tbl), ident(c.col))
+			out = append(out, plan.Statement{
+				OpType: "ALTER_DEFAULT",
+				DDL:    dropDef,
+				Object: schema.TableKey(c.sch, c.tbl) + "." + c.col,
+			})
+		}
+		ddl := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET DATA TYPE %s USING %s",
+			ident(c.sch), ident(c.tbl), ident(c.col), w.TypeSQL, usingExpr)
 		out = append(out, plan.Statement{
 			OpType:  "ALTER_COLUMN_TYPE",
 			DDL:     ddl,
+			Object:  schema.TableKey(c.sch, c.tbl) + "." + c.col,
 			Hazards: []hazard.Detected{{Type: hazard.ColumnTypeChange, Severity: hazard.SeverityBlocking, Message: "Column type change may rewrite table"}},
 		})
 	case "notnull":
@@ -764,7 +784,7 @@ func alterStmt(c change) []plan.Statement {
 		} else {
 			ddl += " SET DEFAULT " + w.DefaultSQL
 		}
-		out = append(out, plan.Statement{OpType: "ALTER_DEFAULT", DDL: ddl})
+		out = append(out, plan.Statement{OpType: "ALTER_DEFAULT", DDL: ddl, Object: schema.TableKey(c.sch, c.tbl) + "." + c.col})
 	}
 	return out
 }
@@ -774,7 +794,7 @@ func createTableSQL(t *schema.Table) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "CREATE TABLE %s.%s (\n", ident(t.Schema), ident(t.Name))
+	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS %s.%s (\n", ident(t.Schema), ident(t.Name))
 	for i, c := range t.Columns {
 		if c == nil {
 			continue

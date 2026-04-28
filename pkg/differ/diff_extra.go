@@ -614,6 +614,28 @@ func seqParamsEqual(a, b string) bool {
 	return pa == pb
 }
 
+// buildAlterSequenceSQL builds an ALTER SEQUENCE statement to update a sequence in-place
+// from the desired CREATE SEQUENCE SQL. This avoids DROP+CREATE which would reset the
+// current sequence value.  Returns "" if the desired SQL cannot be parsed.
+func buildAlterSequenceSQL(desired *schema.Sequence) string {
+	if desired == nil {
+		return ""
+	}
+	p, ok := seqParamsFromSQL(desired.DefSQL)
+	if !ok {
+		return ""
+	}
+	cycleStr := "NO CYCLE"
+	if p.cycle {
+		cycleStr = "CYCLE"
+	}
+	return fmt.Sprintf(
+		"ALTER SEQUENCE IF EXISTS %s.%s INCREMENT BY %d MINVALUE %d MAXVALUE %d CACHE %d %s",
+		ident(desired.Schema), ident(desired.Name),
+		p.increment, p.minvalue, p.maxvalue, p.cache, cycleStr,
+	)
+}
+
 func (c policyCmd) normalized() string {
 	s := strings.ToLower(strings.TrimSpace(string(c)))
 	if s == "*" || s == "" {

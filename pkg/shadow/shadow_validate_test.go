@@ -60,11 +60,11 @@ func TestSplitSQLForShadow_multipleStmts(t *testing.T) {
 	require.Contains(t, stmts[1], "CREATE TABLE b")
 }
 
-// TestValidateMigrationSQL_emptyConnString errors on empty DSN.
-func TestValidateMigrationSQL_emptyConnString(t *testing.T) {
-	err := ValidateMigrationSQL(nil, "", "test.sql", []byte("SELECT 1;"))
+// TestValidateMigrationSQL_nilPool errors on nil pool.
+func TestValidateMigrationSQL_nilPool(t *testing.T) {
+	err := ValidateMigrationSQL(nil, nil, "test.sql", []byte("SELECT 1;"))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "empty connection string")
+	require.Contains(t, err.Error(), "nil pool")
 }
 
 // TestReValidateTxnControl_stripsMarkers checks that the reValidateTxnControl replacer

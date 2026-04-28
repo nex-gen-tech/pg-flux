@@ -77,17 +77,12 @@ var reValidateTxnControl = strings.NewReplacer(
 // CONCURRENTLY statements cannot run inside a transaction; they are validated by parsing
 // alone (BEGIN; <stmt> COMMIT would also fail for them, so we skip execution entirely).
 //
-// connString should point to a disposable shadow database or the live DB. Using the live
+// pool should point to a disposable shadow database or the live DB. Using the live
 // DB is safe because the transaction is always rolled back, but it does take brief locks.
-func ValidateMigrationSQL(ctx context.Context, connString string, filename string, content []byte) error {
-	if connString == "" {
-		return fmt.Errorf("shadow: empty connection string")
+func ValidateMigrationSQL(ctx context.Context, pool *pgxpool.Pool, filename string, content []byte) error {
+	if pool == nil {
+		return fmt.Errorf("shadow: nil pool")
 	}
-	pool, err := pgxpool.New(ctx, connString)
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
 
 	ac, err := pool.Acquire(ctx)
 	if err != nil {
@@ -125,26 +120,125 @@ func ValidateMigrationSQL(ctx context.Context, connString string, filename strin
 	return nil
 }
 
-// splitSQLForShadow splits a SQL string at semicolons, returning non-empty statements.
-// Skips SQL comment lines and blank statements.
+// splitSQLForShadow splits a SQL string into individual statements, correctly handling
+// dollar-quoted strings (e.g. $$ ... $$ in function bodies), single-quoted strings,
+// and double-quoted identifiers. A naïve strings.Split(sql, ";") would break on
+// semicolons inside function bodies.
 func splitSQLForShadow(sql string) []string {
 	var out []string
-	for _, stmt := range strings.Split(sql, ";") {
-		s := strings.TrimSpace(stmt)
-		if s == "" {
-			continue
-		}
-		// Strip leading comment lines.
-		var lines []string
-		for _, line := range strings.Split(s, "\n") {
-			if !strings.HasPrefix(strings.TrimSpace(line), "--") {
-				lines = append(lines, line)
+	var cur strings.Builder
+	n := len(sql)
+	i := 0
+	for i < n {
+		ch := sql[i]
+		switch {
+		// Single-line comment — consume until newline.
+		case ch == '-' && i+1 < n && sql[i+1] == '-':
+			for i < n && sql[i] != '\n' {
+				cur.WriteByte(sql[i])
+				i++
 			}
+		// Block comment /* ... */
+		case ch == '/' && i+1 < n && sql[i+1] == '*':
+			cur.WriteByte(ch)
+			i++
+			cur.WriteByte(sql[i])
+			i++
+			for i < n {
+				if sql[i] == '*' && i+1 < n && sql[i+1] == '/' {
+					cur.WriteByte(sql[i])
+					i++
+					cur.WriteByte(sql[i])
+					i++
+					break
+				}
+				cur.WriteByte(sql[i])
+				i++
+			}
+		// Single-quoted literal 'string'.
+		case ch == '\'':
+			cur.WriteByte(ch)
+			i++
+			for i < n {
+				c := sql[i]
+				cur.WriteByte(c)
+				i++
+				if c == '\'' {
+					if i < n && sql[i] == '\'' {
+						cur.WriteByte(sql[i])
+						i++
+					} else {
+						break
+					}
+				}
+			}
+		// Double-quoted identifier.
+		case ch == '"':
+			cur.WriteByte(ch)
+			i++
+			for i < n {
+				c := sql[i]
+				cur.WriteByte(c)
+				i++
+				if c == '"' {
+					if i < n && sql[i] == '"' {
+						cur.WriteByte(sql[i])
+						i++
+					} else {
+						break
+					}
+				}
+			}
+		// Dollar-quoted string: $tag$...$tag$
+		case ch == '$':
+			j := i + 1
+			for j < n && sql[j] != '$' {
+				j++
+			}
+			if j >= n {
+				cur.WriteByte(ch)
+				i++
+				break
+			}
+			tag := sql[i : j+1]
+			cur.WriteString(tag)
+			i = j + 1
+			closing := tag
+			for i < n {
+				if strings.HasPrefix(sql[i:], closing) {
+					cur.WriteString(closing)
+					i += len(closing)
+					break
+				}
+				cur.WriteByte(sql[i])
+				i++
+			}
+		// Statement terminator.
+		case ch == ';':
+			stmt := strings.TrimSpace(cur.String())
+			cur.Reset()
+			i++
+			if stmt == "" {
+				continue
+			}
+			// Strip leading comment-only lines so an all-comment "statement" is skipped.
+			var lines []string
+			for _, line := range strings.Split(stmt, "\n") {
+				if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+					lines = append(lines, line)
+				}
+			}
+			if s := strings.TrimSpace(strings.Join(lines, "\n")); s != "" {
+				out = append(out, s)
+			}
+		default:
+			cur.WriteByte(ch)
+			i++
 		}
-		s = strings.TrimSpace(strings.Join(lines, "\n"))
-		if s != "" {
-			out = append(out, s)
-		}
+	}
+	// Handle trailing statement without a trailing semicolon.
+	if stmt := strings.TrimSpace(cur.String()); stmt != "" {
+		out = append(out, stmt)
 	}
 	return out
 }

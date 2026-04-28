@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/nexg/pg-flux/pkg/hazard"
 	"github.com/nexg/pg-flux/pkg/plan"
 	"github.com/nexg/pg-flux/pkg/schema"
 )
@@ -92,13 +93,23 @@ func diffExtensions(d, l *schema.SchemaState) []change {
 			}
 		}
 	}
+	// Only auto-drop live extensions that pg-flux manages AND that have been removed
+	// from the desired schema. Extensions installed by a DBA (not in the desired schema
+	// at all) are left alone. Since we cannot distinguish "managed and removed" from
+	// "never managed", we conservatively skip dropping any live extension that is NOT
+	// present in the desired schema. The first loop above handles version upgrades and
+	// DefSQL changes (which use DROP+CREATE internally).
 	for k, le := range l.Extensions {
 		if le == nil {
 			continue
 		}
-		if d.Extensions[k] == nil {
-			out = append(out, change{kind: plan.ChangeDropExtension, dropExt: k, ext: le})
+		if d.Extensions[k] != nil {
+			// Present in desired schema — handled by the first loop above.
+			continue
 		}
+		// Not in desired schema — could be a DBA-managed extension or one recently
+		// removed. Leave it alone; pg-flux does not implicitly drop extensions.
+		_ = k
 	}
 	return out
 }
@@ -119,7 +130,7 @@ func parseEnumValues(list string) []string {
 	return vals
 }
 
-var reExtractTypeName = regexp.MustCompile(`(?i)^CREATE\s+(?:TYPE|DOMAIN)\s+(?:(\w+)\.)?(\w+)`)
+var reExtractTypeName = regexp.MustCompile(`(?i)CREATE\s+(?:TYPE|DOMAIN)\s+(?:(\w+)\.)?(\w+)`)
 
 // reExtractTableName extracts the schema-qualified table name from a CREATE TABLE statement.
 var reExtractTableName = regexp.MustCompile(`(?i)^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(\w+)\.)?(\w+)`)
@@ -172,16 +183,46 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 							for _, v := range liveVals {
 								liveSet[v] = struct{}{}
 							}
-							typeFull := strings.TrimSpace(reExtractTypeName.FindString(s))
-						_ = typeFull
 						// Always use the fully-qualified name (ns already defaults to "public")
 						// so ALTER TYPE ... ADD VALUE works regardless of search_path.
 						qualName := ns + "." + m[2]
+						// Detect removed enum values — PostgreSQL does not support DROP VALUE.
+						// Emit a blocking advisory so the user knows manual recreation is required.
+						desiredSet := make(map[string]struct{}, len(desiredVals))
 						for _, v := range desiredVals {
-							if _, ok := liveSet[v]; !ok {
-								addSQL := "ALTER TYPE " + qualName + " ADD VALUE IF NOT EXISTS '" + v + "'"
-								out = append(out, change{kind: plan.ChangeRawSQL, rawSQL: addSQL})
+							desiredSet[v] = struct{}{}
+						}
+						for _, lv := range liveVals {
+							if _, ok := desiredSet[lv]; !ok {
+								out = append(out, change{
+									kind: plan.ChangeRawSQL,
+									extraHazards: []hazard.Detected{{
+										Type:     hazard.DataLoss,
+										Severity: hazard.SeverityBlocking,
+										Message:  fmt.Sprintf("enum type %s: value '%s' exists in live DB but not in desired schema — PostgreSQL does not support ALTER TYPE DROP VALUE; type must be manually recreated to remove it", qualName, lv),
+									}},
+								})
 							}
+						}
+						// Add new values in desired order, using BEFORE/AFTER to preserve position.
+						for i, v := range desiredVals {
+							if _, ok := liveSet[v]; ok {
+								continue // already exists
+							}
+							addSQL := "ALTER TYPE " + qualName + " ADD VALUE IF NOT EXISTS '" + v + "'"
+							// Position the new value relative to neighbours in the desired list.
+							if i < len(desiredVals)-1 {
+								next := desiredVals[i+1]
+								if _, exists := liveSet[next]; exists {
+									addSQL += " BEFORE '" + next + "'"
+								}
+							} else if i > 0 {
+								prev := desiredVals[i-1]
+								if _, exists := liveSet[prev]; exists {
+									addSQL += " AFTER '" + prev + "'"
+								}
+							}
+							out = append(out, change{kind: plan.ChangeRawSQL, rawSQL: addSQL})
 						}
 						}
 					}
@@ -235,27 +276,24 @@ func diffDomains(desired, live *schema.SchemaState) []change {
 			}
 		}
 		// ADD constraints that exist in desired but not in live.
+		// Track generated names to avoid collisions within the same diff pass.
+		generatedNames := make(map[string]bool)
+		for _, lc := range ld.Constraints {
+			generatedNames[strings.ToLower(lc.Name)] = true
+		}
 		for norm, dc := range desiredExprs {
 			if _, ok := liveByExpr[norm]; !ok {
 				conName := dc.Name
 				if conName == "" {
-					// Auto-generate a name: domainname_check (or _check1, _check2...).
+					// Auto-generate a unique name not already in live or previously generated.
 					base := dd.Name + "_check"
-					conName = base
-					for i := 1; i < 10; i++ {
-						alreadyUsed := false
-						for _, lc := range ld.Constraints {
-							if strings.EqualFold(lc.Name, conName) {
-								alreadyUsed = true
-								break
-							}
-						}
-						if !alreadyUsed {
-							break
-						}
-						conName = fmt.Sprintf("%s%d", base, i)
+					candidate := base
+					for i := 1; generatedNames[strings.ToLower(candidate)]; i++ {
+						candidate = fmt.Sprintf("%s%d", base, i)
 					}
+					conName = candidate
 				}
+				generatedNames[strings.ToLower(conName)] = true
 				ddl := fmt.Sprintf("ALTER DOMAIN %s ADD CONSTRAINT %s CHECK (%s)", qualName, conName, dc.Expr)
 				out = append(out, change{kind: plan.ChangeRawSQL, rawSQL: ddl})
 			}

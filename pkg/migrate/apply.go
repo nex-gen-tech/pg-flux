@@ -68,6 +68,13 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 
 	res := &ApplyResult{}
 
+	var shadowPool *pgxpool.Pool
+	defer func() {
+		if shadowPool != nil {
+			shadowPool.Close()
+		}
+	}()
+
 	for _, fname := range files {
 		base := filepath.Base(fname)
 
@@ -100,7 +107,13 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 		// to catch SQL syntax / semantic errors before touching the live database.
 		if opts.ShadowDSN != "" {
 			logf(opts.Progress, "shadow  %s ...\n", base)
-			if err := shadow.ValidateMigrationSQL(ctx, opts.ShadowDSN, base, content); err != nil {
+			if shadowPool == nil {
+				shadowPool, err = pgxpool.New(ctx, opts.ShadowDSN)
+				if err != nil {
+					return nil, fmt.Errorf("shadow connect: %w", err)
+				}
+			}
+			if err := shadow.ValidateMigrationSQL(ctx, shadowPool, base, content); err != nil {
 				return nil, fmt.Errorf("shadow validate %s: %w", base, err)
 			}
 			logf(opts.Progress, "        ok (shadow)\n")
@@ -204,6 +217,20 @@ func applyOne(ctx context.Context, pool *pgxpool.Pool, trackingSchema, base stri
 		} else {
 			regular = append(regular, s)
 		}
+	}
+
+	// --- transactional block: regular DDL + tracking row (when no concurrent stmts) ---
+	if len(regular) == 0 && len(concurrent) == 0 {
+		// Nothing to execute — still record the migration so it is not re-applied every
+		// run, but skip the DDL transaction entirely.
+		_, err := pool.Exec(ctx,
+			fmt.Sprintf(`INSERT INTO %s.migrations (filename, checksum) VALUES ($1, $2)`,
+				quoteIdent(trackingSchema)),
+			base, chk)
+		if err != nil {
+			return fmt.Errorf("record empty migration: %w", err)
+		}
+		return nil
 	}
 
 	// --- transactional block: regular DDL + tracking row (when no concurrent stmts) ---
