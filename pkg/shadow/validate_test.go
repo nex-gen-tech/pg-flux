@@ -111,5 +111,3 @@ func TestReValidateTxnControl_lowercase(t *testing.T) {
 	require.NotContains(t, output, "commit;")
 	require.Contains(t, output, "SELECT 1")
 }
-
-

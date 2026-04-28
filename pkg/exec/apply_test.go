@@ -104,4 +104,3 @@ func TestApply_ProgressWriterDryRun(t *testing.T) {
 	err := Apply(context.Background(), nil, p, Options{DryRun: true, Progress: &out})
 	require.NoError(t, err)
 }
-
