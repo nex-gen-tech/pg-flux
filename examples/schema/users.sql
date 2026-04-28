@@ -1,6 +1,7 @@
 -- users: core identity record for every account.
 CREATE DOMAIN public.email_address AS text
-  CHECK (VALUE LIKE '%@%' AND length(VALUE) BETWEEN 3 AND 254);
+  CHECK (VALUE LIKE '%@%' AND length(VALUE) BETWEEN 3 AND 254)
+  CONSTRAINT email_no_spaces CHECK (VALUE NOT LIKE '% %');
 
 CREATE TYPE public.user_status AS ENUM ('active', 'suspended', 'deleted', 'pending_review');
 

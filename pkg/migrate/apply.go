@@ -167,11 +167,22 @@ func Status(ctx context.Context, pool *pgxpool.Pool, opts StatusOptions) ([]Migr
 //     same transaction as the DDL.
 //   - If any concurrent statements exist, the tracking row is inserted in its
 //     own transaction after all concurrent statements succeed.
+// reTransactionControl matches bare BEGIN or COMMIT statements emitted by
+// buildMigrationSQL as human-readable transaction markers.  applyOne strips them
+// because the Go-level transaction wrapper (pool.Begin / tx.Commit) handles
+// atomicity together with the tracking-table INSERT.
+var reTransactionControl = regexp.MustCompile(`(?i)^\s*(begin|commit)\s*$`)
+
 func applyOne(ctx context.Context, pool *pgxpool.Pool, trackingSchema, base string, content []byte, chk string) error {
 	stmts := splitSQLStatements(string(content))
 
 	var regular, concurrent []string
 	for _, s := range stmts {
+		// BEGIN / COMMIT in the file are documentation markers; applyOne manages
+		// the transaction itself so these must be stripped to avoid double-begin.
+		if reTransactionControl.MatchString(s) {
+			continue
+		}
 		if isConcurrent(s) {
 			concurrent = append(concurrent, s)
 		} else {

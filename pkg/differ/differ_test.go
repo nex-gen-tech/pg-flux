@@ -28,7 +28,7 @@ func TestDiff_AddColumn(t *testing.T) {
 	for _, s := range dr.Plan.Statements {
 		if s.OpType == string(plan.ChangeAddColumn) {
 			hasAdd = true
-			assert.Contains(t, s.DDL, "ADD COLUMN x")
+			assert.Contains(t, s.DDL, "ADD COLUMN IF NOT EXISTS x")
 		}
 	}
 	assert.True(t, hasAdd, "expected ADD_COLUMN")

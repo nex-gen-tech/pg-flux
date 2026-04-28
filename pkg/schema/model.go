@@ -30,6 +30,10 @@ type SchemaState struct {
 	// Populated by the inspector so diffExtraDDL can skip CREATE TABLE IF NOT EXISTS
 	// for partition children that already exist.
 	PartitionChildren map[string]bool
+	// Domains holds user-defined domain definitions keyed by "schema.name".
+	// Populated by the inspector from the live DB; used by the differ to detect
+	// constraint changes and emit ALTER DOMAIN DDL.
+	Domains map[string]*Domain
 	// ExtraDDL holds pass-through statements (e.g. ALTER TABLE … ATTACH PARTITION) kept in order.
 	ExtraDDL []string
 	// MiscObjects lists recognized but not fully modeled objects (FDW, event triggers, etc.).
@@ -263,4 +267,20 @@ func (t *Table) ColumnNames() []string {
 		}
 	}
 	return out
+}
+
+// DomainConstraint represents a single CHECK constraint on a domain.
+type DomainConstraint struct {
+	// Name is the constraint name as recorded in pg_constraint; may be empty for desired state.
+	Name string
+	// Expr is the normalized CHECK body expression (without outer parentheses).
+	Expr string
+}
+
+// Domain models a user-defined domain type (CREATE DOMAIN ... AS ...).
+type Domain struct {
+	Schema      string
+	Name        string
+	BaseType    string
+	Constraints []DomainConstraint
 }

@@ -225,3 +225,57 @@ func loadTriggerMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (
 	}
 	return out, rows.Err()
 }
+
+// loadDomainMap loads user-defined domains and their CHECK constraints from the catalog.
+// Returns a map keyed by "schema.name".
+func loadDomainMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (map[string]*schema.Domain, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT
+			n.nspname,
+			t.typname,
+			pg_catalog.format_type(t.typbasetype, t.typtypmod) AS base_type,
+			COALESCE(c.conname, '') AS conname,
+			COALESCE(pg_get_constraintdef(c.oid, true), '') AS condef
+		FROM pg_catalog.pg_type t
+		JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+		LEFT JOIN pg_catalog.pg_constraint c
+			ON c.contypid = t.oid AND c.contype = 'c'
+		WHERE t.typtype = 'd'
+		  AND n.nspname = ANY($1)
+		ORDER BY n.nspname, t.typname, c.conname
+	`, schemas)
+	if err != nil {
+		return nil, fmt.Errorf("load domains: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]*schema.Domain)
+	for rows.Next() {
+		var ns, name, baseType, conname, condef string
+		if err := rows.Scan(&ns, &name, &baseType, &conname, &condef); err != nil {
+			return nil, err
+		}
+		key := strings.ToLower(ns) + "." + strings.ToLower(name)
+		dom, ok := out[key]
+		if !ok {
+			dom = &schema.Domain{Schema: ns, Name: name, BaseType: baseType}
+			out[key] = dom
+		}
+		// pg_get_constraintdef returns "CHECK (...)" — strip the "CHECK (" and ")" wrapper.
+		if condef != "" {
+			expr := stripCheckWrapper(condef)
+			dom.Constraints = append(dom.Constraints, schema.DomainConstraint{Name: conname, Expr: expr})
+		}
+	}
+	return out, rows.Err()
+}
+
+// stripCheckWrapper removes the "CHECK (" prefix and trailing ")" from a constraint definition.
+func stripCheckWrapper(s string) string {
+	upper := strings.ToUpper(strings.TrimSpace(s))
+	if strings.HasPrefix(upper, "CHECK (") && strings.HasSuffix(s, ")") {
+		inner := s[len("CHECK (") : len(s)-1]
+		return strings.TrimSpace(inner)
+	}
+	return s
+}

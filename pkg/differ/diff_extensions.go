@@ -1,6 +1,7 @@
 package differ
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -191,6 +192,73 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 			}
 		} else {
 			out = append(out, change{kind: plan.ChangeRawSQL, rawSQL: idempotent})
+		}
+	}
+	return out
+}
+
+// diffDomains compares desired and live domain definitions and emits ALTER DOMAIN changes.
+// Currently handles CHECK constraint additions and removals.
+// Called from Diff() before diffExtraDDL (so CREATE DOMAIN for new domains still goes through ExtraDDL).
+func diffDomains(desired, live *schema.SchemaState) []change {
+	if desired == nil || len(desired.Domains) == 0 {
+		return nil
+	}
+	if live == nil || len(live.Domains) == 0 {
+		return nil
+	}
+	var out []change
+	for key, dd := range desired.Domains {
+		ld, exists := live.Domains[key]
+		if !exists {
+			continue // domain doesn't exist in live; CREATE DOMAIN handled via ExtraDDL
+		}
+		qualName := dd.Schema + "." + dd.Name
+
+		// Build normalized expression sets.
+		liveByExpr := make(map[string]string) // normalized expr → constraint name
+		for _, lc := range ld.Constraints {
+			norm := normExprForCompare(lc.Expr)
+			liveByExpr[norm] = lc.Name
+		}
+		desiredExprs := make(map[string]schema.DomainConstraint)
+		for _, dc := range dd.Constraints {
+			norm := normExprForCompare(dc.Expr)
+			desiredExprs[norm] = dc
+		}
+
+		// DROP constraints that exist in live but not in desired.
+		for norm, lname := range liveByExpr {
+			if _, ok := desiredExprs[norm]; !ok {
+				ddl := fmt.Sprintf("ALTER DOMAIN %s DROP CONSTRAINT IF EXISTS %s", qualName, lname)
+				out = append(out, change{kind: plan.ChangeRawSQL, rawSQL: ddl})
+			}
+		}
+		// ADD constraints that exist in desired but not in live.
+		for norm, dc := range desiredExprs {
+			if _, ok := liveByExpr[norm]; !ok {
+				conName := dc.Name
+				if conName == "" {
+					// Auto-generate a name: domainname_check (or _check1, _check2...).
+					base := dd.Name + "_check"
+					conName = base
+					for i := 1; i < 10; i++ {
+						alreadyUsed := false
+						for _, lc := range ld.Constraints {
+							if strings.EqualFold(lc.Name, conName) {
+								alreadyUsed = true
+								break
+							}
+						}
+						if !alreadyUsed {
+							break
+						}
+						conName = fmt.Sprintf("%s%d", base, i)
+					}
+				}
+				ddl := fmt.Sprintf("ALTER DOMAIN %s ADD CONSTRAINT %s CHECK (%s)", qualName, conName, dc.Expr)
+				out = append(out, change{kind: plan.ChangeRawSQL, rawSQL: ddl})
+			}
 		}
 	}
 	return out

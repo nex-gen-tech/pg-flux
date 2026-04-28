@@ -35,7 +35,9 @@ var reAnyCast = regexp.MustCompile(`::\s*[\w.]+`)
 // reBetween matches "expr BETWEEN a AND b" (simple operands: word chars, digits, or quotes).
 // PostgreSQL expands BETWEEN to (col >= a) AND (col <= b) in pg_get_constraintdef,
 // so we normalise source SQL to the same expanded form.
+// reBetween handles simple identifiers; reBetweenFuncCall handles func(arg) style.
 var reBetween = regexp.MustCompile(`(?i)\b([\w"']+)\s+between\s+([\w']+)\s+and\s+([\w']+)\b`)
+var reBetweenFuncCall = regexp.MustCompile(`(?i)\b(\w+\([^)]*\))\s+between\s+(\S+)\s+and\s+(\S+)`)
 
 // normalizePGCatalogConstraintText normalises common PostgreSQL catalog transformations so that
 // source SQL and pg_get_constraintdef output round-trip to the same fingerprint:
@@ -60,8 +62,10 @@ func normalizePGCatalogConstraintText(s string) string {
 		inner = reAnyCast.ReplaceAllString(inner, "")
 		return "in (" + inner + ")"
 	})
-	// Expand "x BETWEEN a AND b" → "(x >= a) and (x <= b)" so source SQL matches catalog form.
-	s = reBetween.ReplaceAllString(s, "($1 >= $2) and ($1 <= $3)")
+	// Expand "x BETWEEN a AND b" → "x >= a and x <= b" so source SQL matches catalog form.
+	// Apply function-call form first (more specific), then simple identifier form.
+	s = reBetweenFuncCall.ReplaceAllString(s, "$1 >= $2 and $1 <= $3")
+	s = reBetween.ReplaceAllString(s, "$1 >= $2 and $1 <= $3")
 	return s
 }
 
@@ -489,6 +493,8 @@ func normExprForCompare(s string) string {
 	// Strip pg_catalog. qualifier from built-in function names (pg_query deparser may add this
 	// when converting AT TIME ZONE to timezone() call, while the catalog stores the bare name).
 	s = strings.ReplaceAll(s, "pg_catalog.", "")
+	// Apply catalog normalization: ~~ → like, BETWEEN expansion, etc.
+	s = normalizePGCatalogConstraintText(s)
 	// Normalise whitespace (already lowercased above, but handle fallback path).
 	return strings.TrimSpace(strings.ToLower(reMultiSpace.ReplaceAllString(s, " ")))
 }

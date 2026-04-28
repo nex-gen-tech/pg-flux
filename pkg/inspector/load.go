@@ -137,6 +137,12 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	}
 	st.UserTypes = utm
 	st.EnumValues = enumVals
+	// Load domain definitions with CHECK constraints for ALTER DOMAIN diffing.
+	dm, err := loadDomainMap(ctx, pool, schemas)
+	if err != nil {
+		return nil, err
+	}
+	st.Domains = dm
 	// Load partition children so diffExtraDDL can skip them if they already exist.
 	pc, err := loadPartitionChildren(ctx, pool, schemas)
 	if err != nil {

@@ -100,24 +100,72 @@ func buildMigrationSQL(p *plan.ExecutionPlan) string {
 	var b strings.Builder
 	b.WriteString("-- pg-flux generated migration\n")
 	b.WriteString("-- DO NOT EDIT unless you know what you are doing.\n\n")
+
+	// Separate advisory/concurrent statements from regular (transactional) ones.
+	// Regular non-concurrent DDL is wrapped in an explicit BEGIN/COMMIT so the
+	// file is self-contained when run manually (e.g. psql -f migration.sql).
+	// pg-flux apply strips BEGIN/COMMIT and manages the transaction itself so it
+	// can include the tracking-table INSERT in the same commit.
+	var regular, concurrent, advisory []struct {
+		Stmt plan.Statement
+	}
 	for _, s := range p.Statements {
-		// Emit advisory hazard notices as SQL comments (no DDL to execute).
-		for _, h := range s.Hazards {
+		if s.DDL == "" {
+			advisory = append(advisory, struct{ Stmt plan.Statement }{s})
+			continue
+		}
+		if s.IsConcurrent {
+			concurrent = append(concurrent, struct{ Stmt plan.Statement }{s})
+		} else {
+			regular = append(regular, struct{ Stmt plan.Statement }{s})
+		}
+	}
+
+	// Advisory notices first (no DDL).
+	for _, a := range advisory {
+		for _, h := range a.Stmt.Hazards {
 			if h.Severity == "advisory" {
 				fmt.Fprintf(&b, "-- [ADVISORY %s] %s\n", h.Type, h.Message)
 			}
 		}
-		if s.DDL == "" {
-			// Advisory-only statement: already emitted above, add blank line separator.
-			if len(s.Hazards) > 0 {
-				b.WriteString("\n")
-			}
-			continue
-		}
-		fmt.Fprintf(&b, "-- [%d] %s: %s\n", s.ID, s.OpType, s.Object)
-		ddl := strings.TrimRight(s.DDL, ";")
-		b.WriteString(ddl)
-		b.WriteString(";\n\n")
 	}
+	if len(advisory) > 0 {
+		b.WriteString("\n")
+	}
+
+	// Transactional block: regular (non-concurrent) DDL.
+	if len(regular) > 0 {
+		b.WriteString("BEGIN;\n\n")
+		for _, r := range regular {
+			s := r.Stmt
+			// Inline any blocking hazard warnings as SQL comments.
+			for _, h := range s.Hazards {
+				if h.Severity != "advisory" {
+					fmt.Fprintf(&b, "-- [HAZARD %s] %s\n", h.Type, h.Message)
+				}
+			}
+			fmt.Fprintf(&b, "-- [%d] %s: %s\n", s.ID, s.OpType, s.Object)
+			ddl := strings.TrimRight(s.DDL, ";")
+			b.WriteString(ddl)
+			b.WriteString(";\n\n")
+		}
+		b.WriteString("COMMIT;\n")
+	}
+
+	// CONCURRENT statements cannot run inside a transaction; they follow COMMIT.
+	if len(concurrent) > 0 {
+		if len(regular) > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("-- The following statements use CONCURRENTLY and run outside the transaction.\n")
+		for _, c := range concurrent {
+			s := c.Stmt
+			fmt.Fprintf(&b, "-- [%d] %s: %s\n", s.ID, s.OpType, s.Object)
+			ddl := strings.TrimRight(s.DDL, ";")
+			b.WriteString(ddl)
+			b.WriteString(";\n\n")
+		}
+	}
+
 	return b.String()
 }

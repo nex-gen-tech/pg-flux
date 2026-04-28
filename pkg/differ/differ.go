@@ -2,6 +2,7 @@ package differ
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -167,6 +168,7 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 	changes = append(changes, diffSequences(desired, live)...)
 	changes = append(changes, diffTriggers(desired, live)...)
 	changes = append(changes, diffExtensions(desired, live)...)
+	changes = append(changes, diffDomains(desired, live)...)
 	changes = append(changes, diffExtraDDL(desired, live)...)
 	changes = append(changes, diffMiscObjects(desired)...)
 	changes = injectViewRefreshForTypeChanges(changes, desired, live)
@@ -474,7 +476,7 @@ func stmtFor(c change, opt Options) []plan.Statement {
 		return []plan.Statement{{OpType: string(c.kind), DDL: ddl, Object: schema.TableKey(c.sch, c.tbl)}}
 	case plan.ChangeAddColumn:
 		dc := c.dc
-		ddl := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", qt(c.sch, c.tbl), ident(c.col), dc.TypeSQL)
+		ddl := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", qt(c.sch, c.tbl), ident(c.col), dc.TypeSQL)
 		if dc.GeneratedExpr != "" {
 			ddl += fmt.Sprintf(" GENERATED ALWAYS AS (%s) STORED", dc.GeneratedExpr)
 		} else {
@@ -981,6 +983,7 @@ func renumber(s *[]plan.Statement) {
 }
 
 // rewriteIndexConcurrent turns CREATE [UNIQUE] INDEX into CONCURRENT form (PRD safe default).
+// It also ensures IF NOT EXISTS is present for idempotency.
 func rewriteIndexConcurrent(sql string) string {
 	s := strings.TrimSpace(sql)
 	if s == "" {
@@ -988,13 +991,34 @@ func rewriteIndexConcurrent(sql string) string {
 	}
 	upper := strings.ToUpper(s)
 	if strings.Contains(upper, "CONCURRENTLY") {
-		return s
+		return ensureIndexIfNotExists(s)
 	}
 	if strings.HasPrefix(upper, "CREATE UNIQUE INDEX ") {
-		return strings.Replace(s, "CREATE UNIQUE INDEX", "CREATE UNIQUE INDEX CONCURRENTLY", 1)
+		s = strings.Replace(s, "CREATE UNIQUE INDEX", "CREATE UNIQUE INDEX CONCURRENTLY", 1)
+		// After replace, "CREATE UNIQUE INDEX" changed, but the case may differ; just search in-place.
+		if idx := strings.Index(strings.ToUpper(s), "CREATE UNIQUE INDEX"); idx >= 0 {
+			_ = idx
+		}
+	} else if strings.HasPrefix(upper, "CREATE INDEX ") {
+		s = strings.Replace(s, "CREATE INDEX", "CREATE INDEX CONCURRENTLY", 1)
 	}
-	if strings.HasPrefix(upper, "CREATE INDEX ") {
-		return strings.Replace(s, "CREATE INDEX", "CREATE INDEX CONCURRENTLY", 1)
+	return ensureIndexIfNotExists(s)
+}
+
+// ensureIndexIfNotExists rewrites CREATE [UNIQUE] INDEX [CONCURRENTLY] name ...
+// to add IF NOT EXISTS before the index name if not already present.
+// Matches: CREATE INDEX [CONCURRENTLY] <name> → CREATE INDEX [CONCURRENTLY] IF NOT EXISTS <name>
+var reIndexPrefix = regexp.MustCompile(`(?i)^(CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?)`)
+
+func ensureIndexIfNotExists(sql string) string {
+	loc := reIndexPrefix.FindStringIndex(sql)
+	if loc == nil {
+		return sql
 	}
-	return s
+	rest := sql[loc[1]:]
+	upper := strings.ToUpper(strings.TrimSpace(rest))
+	if strings.HasPrefix(upper, "IF NOT EXISTS") {
+		return sql // already present
+	}
+	return sql[:loc[1]] + "IF NOT EXISTS " + rest
 }

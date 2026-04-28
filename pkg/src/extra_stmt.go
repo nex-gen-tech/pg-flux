@@ -55,7 +55,13 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 	case *pgq.Node_CreatePublicationStmt:
 		return captureDeparsedMisc("PUBLICATION", raw, st)
 	// PRD v2 / V2-A: type and schema DDL must not be silently dropped (pass-through in plan order).
-	case *pgq.Node_DefineStmt, *pgq.Node_CreateDomainStmt, *pgq.Node_CompositeTypeStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
+	case *pgq.Node_CreateDomainStmt:
+		// Capture structured domain data for constraint diffing, AND keep the raw DDL.
+		if err := captureDomain(n.CreateDomainStmt, st); err != nil {
+			return err
+		}
+		return captureDeparsedExtraDDL(raw, st)
+	case *pgq.Node_DefineStmt, *pgq.Node_CompositeTypeStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
 		return captureDeparsedExtraDDL(raw, st)
 	// GRANT / REVOKE: pass-through as MiscObject so they are applied in plan order.
 	case *pgq.Node_GrantStmt, *pgq.Node_GrantRoleStmt:
@@ -78,6 +84,69 @@ func captureDeparsedExtraDDL(raw *pgq.RawStmt, st *schema.SchemaState) error {
 		return nil
 	}
 	st.ExtraDDL = append(st.ExtraDDL, s)
+	return nil
+}
+
+// captureDomain extracts structured domain information into SchemaState.Domains.
+func captureDomain(d *pgq.CreateDomainStmt, st *schema.SchemaState) error {
+	if d == nil || d.GetDomainname() == nil {
+		return nil
+	}
+	names := d.GetDomainname()
+	var sch, name string
+	switch len(names) {
+	case 1:
+		sch = "public"
+		name = strings.ToLower(names[0].GetString_().GetSval())
+	case 2:
+		sch = strings.ToLower(names[0].GetString_().GetSval())
+		name = strings.ToLower(names[1].GetString_().GetSval())
+	default:
+		return nil
+	}
+	key := sch + "." + name
+
+	// Extract base type name.
+	baseType := ""
+	if tn := d.GetTypeName(); tn != nil {
+		if parts := tn.GetNames(); len(parts) > 0 {
+			var typParts []string
+			for _, p := range parts {
+				s := p.GetString_().GetSval()
+				if s != "pg_catalog" {
+					typParts = append(typParts, s)
+				}
+			}
+			baseType = strings.Join(typParts, ".")
+		}
+	}
+
+	dom := &schema.Domain{Schema: sch, Name: name, BaseType: baseType}
+
+	// Extract CHECK constraints.
+	for _, cn := range d.GetConstraints() {
+		cc := cn.GetConstraint()
+		if cc == nil || cc.GetContype() != pgq.ConstrType_CONSTR_CHECK {
+			continue
+		}
+		expr := ""
+		if raw := cc.GetRawExpr(); raw != nil {
+			if s, err := deparseExprToSQL(raw); err == nil {
+				expr = strings.TrimSpace(s)
+			}
+		}
+		if expr != "" {
+			dom.Constraints = append(dom.Constraints, schema.DomainConstraint{
+				Name: cc.GetConname(),
+				Expr: expr,
+			})
+		}
+	}
+
+	if st.Domains == nil {
+		st.Domains = make(map[string]*schema.Domain)
+	}
+	st.Domains[key] = dom
 	return nil
 }
 
