@@ -19,6 +19,9 @@ CREATE TABLE public.users (
   updated_at  timestamptz     NOT NULL DEFAULT now(),
   -- Issue 8 test: integer column with CHECK constraint (PG adds ::integer cast in catalog)
   test_score  integer         DEFAULT 0,
+  -- Issue 5: array default and AT TIME ZONE drift test
+  tags        text[]          DEFAULT ARRAY[]::text[],
+  utc_signup  timestamptz     DEFAULT (now() AT TIME ZONE 'UTC'),
   -- Issue 2 (generated col): stored generated column — full_name uppercased for search
   search_name text            GENERATED ALWAYS AS (upper(coalesce(full_name, handle))) STORED,
 

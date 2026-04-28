@@ -486,6 +486,9 @@ func normExprForCompare(s string) string {
 	}
 	// Strip type casts: ::typename and ::schema.typename
 	s = reTypeCast.ReplaceAllString(s, "")
+	// Strip pg_catalog. qualifier from built-in function names (pg_query deparser may add this
+	// when converting AT TIME ZONE to timezone() call, while the catalog stores the bare name).
+	s = strings.ReplaceAll(s, "pg_catalog.", "")
 	// Normalise whitespace (already lowercased above, but handle fallback path).
 	return strings.TrimSpace(strings.ToLower(reMultiSpace.ReplaceAllString(s, " ")))
 }

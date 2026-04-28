@@ -217,6 +217,8 @@ type change struct {
 	ext        *schema.Extension
 	dropExt    string
 	extLiveVer string
+	// extraHazards are advisory notices attached to this change (e.g. column reorder).
+	extraHazards []hazard.Detected
 }
 
 func wantTable(des *schema.SchemaState, lKey string, m map[string]string) bool {
@@ -247,6 +249,56 @@ func hasChange(ch []change, dKey string, k plan.ChangeType) bool {
 		}
 	}
 	return false
+}
+
+// columnOrderNotice returns a non-empty advisory message when the relative order of
+// surviving columns (those present in both desired and live) differs between the two.
+// PostgreSQL does not support column reordering without table recreation, so this is
+// surfaced as an advisory notice rather than actionable DDL.
+func columnOrderNotice(dt, lt *schema.Table) string {
+	if dt == nil || lt == nil {
+		return ""
+	}
+	// Build a lookup: live column name → position
+	livePos := make(map[string]int, len(lt.Columns))
+	for i, c := range lt.Columns {
+		if c != nil {
+			livePos[c.Name] = i
+		}
+	}
+	// Build the desired position of columns that survive (exist in live after renames).
+	type pair struct{ desiredPos, livePos int }
+	var surviving []pair
+	for di, dc := range dt.Columns {
+		if dc == nil {
+			continue
+		}
+		liveName := dc.Name
+		if dc.RenameFrom != "" {
+			liveName = dc.RenameFrom
+		}
+		if lp, ok := livePos[liveName]; ok {
+			surviving = append(surviving, pair{di, lp})
+		}
+	}
+	if len(surviving) < 2 {
+		return ""
+	}
+	// Check if live positions are already in the same relative order as desired.
+	for i := 1; i < len(surviving); i++ {
+		if surviving[i].livePos < surviving[i-1].livePos {
+			// Reordering detected.
+			desiredOrder := make([]string, 0, len(surviving))
+			for _, p := range surviving {
+				desiredOrder = append(desiredOrder, dt.Columns[p.desiredPos].Name)
+			}
+			return fmt.Sprintf(
+				"Column order in %s.%s differs from desired schema; reordering requires table recreation. Desired order (surviving cols): %s",
+				dt.Schema, dt.Name, strings.Join(desiredOrder, ", "),
+			)
+		}
+	}
+	return ""
 }
 
 func diffColumns(dt, lt *schema.Table, dKey string) ([]change, error) {
@@ -301,6 +353,21 @@ func diffColumns(dt, lt *schema.Table, dKey string) ([]change, error) {
 		if !used[n] {
 			out = append(out, change{kind: plan.ChangeDropColumn, sch: dt.Schema, tbl: dt.Name, col: oc.Name, lc: oc})
 		}
+	}
+	// Detect column ordering differences between desired and live for columns that survive.
+	// Build the relative order of surviving columns in desired vs live.
+	if notice := columnOrderNotice(dt, lt); notice != "" {
+		out = append(out, change{
+			kind: plan.ChangeRawSQL,
+			rawSQL: "",
+			sch:  dt.Schema,
+			tbl:  dt.Name,
+			extraHazards: []hazard.Detected{{
+				Type:     hazard.ColumnReorder,
+				Severity: hazard.SeverityAdvisory,
+				Message:  notice,
+			}},
+		})
 	}
 	return out, nil
 }
@@ -618,14 +685,27 @@ func stmtFor(c change, opt Options) []plan.Statement {
 			OpType: string(c.kind), DDL: c.rawSQL, Object: "raw",
 		}}
 	case plan.ChangeRawSQL:
+		// A ChangeRawSQL with empty SQL but extraHazards is a pure advisory notice.
 		if strings.TrimSpace(c.rawSQL) == "" {
+			if len(c.extraHazards) > 0 {
+				return []plan.Statement{{
+					OpType:  string(c.kind),
+					DDL:     "",
+					Object:  schema.TableKey(c.sch, c.tbl),
+					Hazards: c.extraHazards,
+				}}
+			}
 			return nil
+		}
+		hazards := c.extraHazards
+		if len(hazards) == 0 {
+			hazards = []hazard.Detected{
+				{Type: hazard.TableLock, Severity: hazard.SeverityAdvisory, Message: "Pass-through DDL: verify idempotency and lock impact"},
+			}
 		}
 		return []plan.Statement{{
 			OpType: string(c.kind), DDL: c.rawSQL, Object: "raw",
-			Hazards: []hazard.Detected{
-				{Type: hazard.TableLock, Severity: hazard.SeverityAdvisory, Message: "Pass-through DDL: verify idempotency and lock impact"},
-			},
+			Hazards: hazards,
 		}}
 	case plan.ChangeCreateTrigger:
 		if c.trig == nil {
@@ -656,7 +736,11 @@ func alterStmt(c change) []plan.Statement {
 	}
 	switch c.alterKind {
 	case "type":
-		ddl := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET DATA TYPE %s", ident(c.sch), ident(c.tbl), ident(c.col), w.TypeSQL)
+		// Always emit an explicit USING clause so type changes with no implicit cast
+		// fail with a clear error (rather than a cryptic internal error), and so that
+		// common widening casts (int→bigint, varchar→text) are handled correctly.
+		ddl := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET DATA TYPE %s USING %s::%s",
+			ident(c.sch), ident(c.tbl), ident(c.col), w.TypeSQL, ident(c.col), w.TypeSQL)
 		out = append(out, plan.Statement{
 			OpType:  "ALTER_COLUMN_TYPE",
 			DDL:     ddl,

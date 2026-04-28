@@ -18,6 +18,9 @@ const (
 	ValidateConstraintScan Type = "VALIDATE_CONSTRAINT_SCAN"
 	// StagedSetNotNull suggests the four-step CHECK/VALIDATE pattern for large tables.
 	StagedSetNotNull Type = "STAGED_SET_NOT_NULL"
+	// ColumnReorder indicates the desired column order differs from the live schema.
+	// Reordering columns requires table recreation; this is advisory only.
+	ColumnReorder Type = "COLUMN_REORDER"
 )
 
 // Severity distinguishes blocking vs advisory.
@@ -40,7 +43,7 @@ func DefaultSeverity(t Type) Severity {
 	switch t {
 	case DataLoss, ColumnTypeChange, ConstraintScan, NotReplicaSafe, FunctionSignatureChange, EnumValueDrop, ValidateConstraintScan:
 		return SeverityBlocking
-	case TableLock, IndexRebuild, DeferredConstraintValidation, StagedSetNotNull:
+	case TableLock, IndexRebuild, DeferredConstraintValidation, StagedSetNotNull, ColumnReorder:
 		return SeverityAdvisory
 	default:
 		return SeverityBlocking

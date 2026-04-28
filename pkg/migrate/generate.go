@@ -64,6 +64,19 @@ func Generate(
 		return &GenerateResult{}, nil
 	}
 
+	// Advisory-only plans (no actual DDL to execute) should not generate a file.
+	// Advisories are surfaced as comments when bundled with real changes.
+	hasActionable := false
+	for _, s := range diffResult.Plan.Statements {
+		if strings.TrimSpace(s.DDL) != "" {
+			hasActionable = true
+			break
+		}
+	}
+	if !hasActionable {
+		return &GenerateResult{}, nil
+	}
+
 	sql := buildMigrationSQL(diffResult.Plan)
 	filename := TimestampFilename(opts.Label)
 	fullPath := filepath.Join(opts.MigrationsDir, filename)
@@ -88,7 +101,17 @@ func buildMigrationSQL(p *plan.ExecutionPlan) string {
 	b.WriteString("-- pg-flux generated migration\n")
 	b.WriteString("-- DO NOT EDIT unless you know what you are doing.\n\n")
 	for _, s := range p.Statements {
+		// Emit advisory hazard notices as SQL comments (no DDL to execute).
+		for _, h := range s.Hazards {
+			if h.Severity == "advisory" {
+				fmt.Fprintf(&b, "-- [ADVISORY %s] %s\n", h.Type, h.Message)
+			}
+		}
 		if s.DDL == "" {
+			// Advisory-only statement: already emitted above, add blank line separator.
+			if len(s.Hazards) > 0 {
+				b.WriteString("\n")
+			}
 			continue
 		}
 		fmt.Fprintf(&b, "-- [%d] %s: %s\n", s.ID, s.OpType, s.Object)

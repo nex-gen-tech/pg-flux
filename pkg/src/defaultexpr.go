@@ -12,7 +12,12 @@ func defaultExprToSQL(n *pgq.Node) (string, error) {
 	if n == nil {
 		return "", nil
 	}
-	return tryQuickExprString(n), nil
+	q := tryQuickExprString(n)
+	if q != "NULL" {
+		return q, nil
+	}
+	// tryQuickExprString couldn't handle this node; fall back to the full pg_query deparser.
+	return deparseExprToSQL(n)
 }
 
 func tryQuickExprString(n *pgq.Node) string {
