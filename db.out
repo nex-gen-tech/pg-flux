@@ -1,8 +1,0 @@
-mode: set
-github.com/nexg/pg-flux/pkg/db/db.go:14.71,16.16 2 1
-github.com/nexg/pg-flux/pkg/db/db.go:16.16,18.3 1 1
-github.com/nexg/pg-flux/pkg/db/db.go:19.2,19.16 1 1
-github.com/nexg/pg-flux/pkg/db/db.go:19.16,21.3 1 1
-github.com/nexg/pg-flux/pkg/db/db.go:22.2,23.16 2 0
-github.com/nexg/pg-flux/pkg/db/db.go:23.16,25.3 1 0
-github.com/nexg/pg-flux/pkg/db/db.go:26.2,28.40 3 0

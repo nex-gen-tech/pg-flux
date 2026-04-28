@@ -13,8 +13,8 @@ dist/
 profile.out
 *.cpu
 
-# Coverage
-coverage.out
+# Coverage / profiling output
+*.out
 *.coverprofile
 coverage.html
 
