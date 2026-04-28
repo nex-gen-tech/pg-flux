@@ -62,6 +62,25 @@ func captureAlterTable(at *pgq.AlterTableStmt, raw *pgq.RawStmt, st *schema.Sche
 		if rlsForce != nil {
 			t.RLSForced = *rlsForce
 		}
+	} else if rlsOn != nil || rlsForce != nil {
+		// Table not yet loaded (ALTER TABLE in a file sorted before CREATE TABLE).
+		// Accumulate pending flags to be applied in a second pass.
+		if st.PendingRLS == nil {
+			st.PendingRLS = make(map[string]*schema.RLSFlags)
+		}
+		f := st.PendingRLS[key]
+		if f == nil {
+			f = &schema.RLSFlags{}
+			st.PendingRLS[key] = f
+		}
+		if rlsOn != nil {
+			f.Enabled = *rlsOn
+			f.EnabledSet = true
+		}
+		if rlsForce != nil {
+			f.Forced = *rlsForce
+			f.ForcedSet = true
+		}
 	}
 	return nil
 }

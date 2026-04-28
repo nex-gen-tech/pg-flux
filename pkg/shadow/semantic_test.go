@@ -9,6 +9,6 @@ import (
 )
 
 func TestValidateSemanticApply_Empty(t *testing.T) {
-	require.NoError(t, ValidateSemanticApply(context.Background(), nil, nil))
-	require.NoError(t, ValidateSemanticApply(context.Background(), nil, &plan.ExecutionPlan{}))
+	require.NoError(t, ValidateSemanticApply(context.Background(), nil, nil, ""))
+	require.NoError(t, ValidateSemanticApply(context.Background(), nil, &plan.ExecutionPlan{}, ""))
 }

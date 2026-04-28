@@ -11,8 +11,12 @@ import (
 // See package depgraph: not every PostgreSQL form is modeled.
 
 var (
-	reDDLCreateType   = regexp.MustCompile(`(?is)CREATE\s+TYPE\s+((?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*)`)
-	reDDLCreateDomain = regexp.MustCompile(`(?is)CREATE\s+DOMAIN\s+((?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*)`)
+	// identOrQuoted matches a schema-qualified or bare identifier, with optional double-quoting.
+	// Matches: my_type, public.my_type, "My Type", "pub"."My Type"
+	identOrQuoted = `(?:(?:(?:"[^"]*"|[a-z_][a-z0-9_]*)\.)?(?:"[^"]*"|[a-z_][a-z0-9_]*))`
+
+	reDDLCreateType   = regexp.MustCompile(`(?is)CREATE\s+TYPE\s+(` + identOrQuoted + `)`)
+	reDDLCreateDomain = regexp.MustCompile(`(?is)CREATE\s+DOMAIN\s+(` + identOrQuoted + `)`)
 	reAllQualified    = regexp.MustCompile(`\b([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\b`)
 	reDomainAS        = regexp.MustCompile(`(?is)CREATE\s+DOMAIN(?:\s+IF\s+NOT\s+EXISTS)?\s+(?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*\s+AS\s+((?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*|[_a-z][a-z0-9_]*)\b`)
 	reTypeRangeSub    = regexp.MustCompile(`(?is)SUBTYPE\s*=\s*((?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*|[_a-z][a-z0-9_]*)\b`)
@@ -208,4 +212,3 @@ func splitKeySchema(k string) (string, string) {
 	}
 	return p[0], p[1]
 }
-

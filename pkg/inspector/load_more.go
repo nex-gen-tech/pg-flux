@@ -10,6 +10,67 @@ import (
 	"github.com/nexg/pg-flux/pkg/schema"
 )
 
+// loadUserTypeMap returns a set of user-defined type keys ("schema.name") for enum,
+// domain, and composite types visible in the given schemas.
+func loadUserTypeMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (map[string]struct{}, map[string][]string, error) {
+	typeSet := make(map[string]struct{})
+	enumVals := make(map[string][]string)
+	rows, err := pool.Query(ctx, `
+		SELECT n.nspname, t.typname, t.typtype::text
+		FROM pg_type t
+		JOIN pg_namespace n ON n.oid = t.typnamespace
+		WHERE n.nspname = ANY($1)
+		  AND t.typtype IN ('e', 'd', 'c')   -- enum, domain, composite
+		  AND t.typelem = 0                   -- exclude array types (_typename)
+	`, schemas)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load user types: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ns, name, typtype string
+		if err := rows.Scan(&ns, &name, &typtype); err != nil {
+			return nil, nil, err
+		}
+		key := strings.ToLower(ns) + "." + strings.ToLower(name)
+		typeSet[key] = struct{}{}
+		if typtype == "e" {
+			enumVals[key] = nil // mark as enum; values filled below
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// Load enum labels in sort order.
+	if len(enumVals) > 0 {
+		erows, err := pool.Query(ctx, `
+			SELECT n.nspname, t.typname, e.enumlabel
+			FROM pg_enum e
+			JOIN pg_type t ON t.oid = e.enumtypid
+			JOIN pg_namespace n ON n.oid = t.typnamespace
+			WHERE n.nspname = ANY($1)
+			ORDER BY t.typname, e.enumsortorder
+		`, schemas)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load enum values: %w", err)
+		}
+		defer erows.Close()
+		for erows.Next() {
+			var ns, name, label string
+			if err := erows.Scan(&ns, &name, &label); err != nil {
+				return nil, nil, err
+			}
+			key := strings.ToLower(ns) + "." + strings.ToLower(name)
+			enumVals[key] = append(enumVals[key], label)
+		}
+		if err := erows.Err(); err != nil {
+			return nil, nil, err
+		}
+	}
+	return typeSet, enumVals, nil
+}
+
 // mergeTableConstraints appends CHECK / FOREIGN KEY rows from pg_constraint into existing tables.
 func mergeTableConstraints(ctx context.Context, pool *pgxpool.Pool, st *schema.SchemaState, schemas []string) error {
 	rows, err := pool.Query(ctx, `
@@ -108,6 +169,12 @@ func loadSequenceMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		JOIN pg_sequence s ON s.seqrelid = c.oid
 		WHERE c.relkind = 'S' AND n.nspname = ANY($1)
+		-- Exclude sequences that are owned by a column (implicit serial/bigserial sequences).
+		AND NOT EXISTS (
+			SELECT 1 FROM pg_depend d
+			JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+			WHERE d.objid = c.oid AND d.deptype = 'a' AND d.classid = 'pg_class'::regclass
+		)
 		ORDER BY n.nspname, c.relname
 	`, schemas)
 	if err != nil {

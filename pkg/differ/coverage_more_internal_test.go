@@ -15,9 +15,9 @@ func TestFpGenericSQL(t *testing.T) {
 }
 
 func TestDiffExtraDDL_(t *testing.T) {
-	require.Nil(t, diffExtraDDL(nil))
-	require.Nil(t, diffExtraDDL(&schema.SchemaState{}))
-	ch := diffExtraDDL(&schema.SchemaState{ExtraDDL: []string{"  ", "ALTER SYSTEM SET x = 1"}})
+	require.Nil(t, diffExtraDDL(nil, nil))
+	require.Nil(t, diffExtraDDL(&schema.SchemaState{}, nil))
+	ch := diffExtraDDL(&schema.SchemaState{ExtraDDL: []string{"  ", "ALTER SYSTEM SET x = 1"}}, nil)
 	require.Len(t, ch, 1)
 	require.Equal(t, plan.ChangeRawSQL, ch[0].kind)
 	require.Contains(t, ch[0].rawSQL, "ALTER SYSTEM")
@@ -46,11 +46,11 @@ func TestDiffTableConstraints_addDropRename(t *testing.T) {
 		Schema: "public", Name: "t",
 		Checks: []*schema.TableCheck{{Name: "c2", DefSQL: "CHECK (name IS NOT NULL)"}},
 	}
-	ch := diffTableConstraints(dt, lt)
+	ch := diffTableConstraints(dt, lt, nil)
 	require.NotEmpty(t, ch)
 }
 
 func TestDiffTableConstraints_nilTables(t *testing.T) {
-	require.Empty(t, diffTableConstraints(nil, &schema.Table{}))
-	require.Empty(t, diffTableConstraints(&schema.Table{}, nil))
+	require.Empty(t, diffTableConstraints(nil, &schema.Table{}, nil))
+	require.Empty(t, diffTableConstraints(&schema.Table{}, nil, nil))
 }

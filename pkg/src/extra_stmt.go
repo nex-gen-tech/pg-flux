@@ -57,6 +57,9 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 	// PRD v2 / V2-A: type and schema DDL must not be silently dropped (pass-through in plan order).
 	case *pgq.Node_DefineStmt, *pgq.Node_CreateDomainStmt, *pgq.Node_CompositeTypeStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
 		return captureDeparsedExtraDDL(raw, st)
+	// GRANT / REVOKE: pass-through as MiscObject so they are applied in plan order.
+	case *pgq.Node_GrantStmt, *pgq.Node_GrantRoleStmt:
+		return captureDeparsedMisc("GRANT", raw, st)
 	default:
 		return nil
 	}
@@ -175,6 +178,14 @@ func functionIdentityString(schemaName string, x *pgq.CreateFunctionStmt) string
 			continue
 		}
 		if fp := p.GetFunctionParameter(); fp != nil {
+			// Skip OUT / TABLE parameters — they are not part of the function's
+			// proargtypes identity (which only counts input arguments), matching
+			// what the inspector reads from pg_proc.proargtypes.
+			mode := fp.GetMode()
+			if mode == pgq.FunctionParameterMode_FUNC_PARAM_OUT ||
+				mode == pgq.FunctionParameterMode_FUNC_PARAM_TABLE {
+				continue
+			}
 			if ts, e := typeNameToSQL(fp.GetArgType()); e == nil {
 				atypes = append(atypes, schema.NormalizeTypeForCompare(ts))
 			}
@@ -264,6 +275,8 @@ func capturePolicy(x *pgq.CreatePolicyStmt, raw *pgq.RawStmt, st *schema.SchemaS
 		Cmd:        x.GetCmdName(),
 		DefSQL:     sql,
 		Permissive: x.GetPermissive(),
+		UsingSQL:   deparseExprNode(x.GetQual()),
+		WithCheck:  deparseExprNode(x.GetWithCheck()),
 	}
 	pol.Roles = policyRolesFromNodes(x.GetRoles())
 	st.Policies[k] = pol
@@ -271,13 +284,38 @@ func capturePolicy(x *pgq.CreatePolicyStmt, raw *pgq.RawStmt, st *schema.SchemaS
 	return nil
 }
 
+// deparseExprNode deparsess a single expression node by wrapping it in a synthetic
+// SELECT statement, then stripping the "SELECT " prefix from the result.
+func deparseExprNode(n *pgq.Node) string {
+	if n == nil {
+		return ""
+	}
+	synth := &pgq.ParseResult{
+		Stmts: []*pgq.RawStmt{
+			{
+				Stmt: &pgq.Node{
+					Node: &pgq.Node_SelectStmt{
+						SelectStmt: &pgq.SelectStmt{
+							TargetList: []*pgq.Node{
+								pgq.MakeResTargetNodeWithVal(n, 0),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	dep, err := pgq.Deparse(synth)
+	if err != nil {
+		return ""
+	}
+	dep = strings.ToLower(strings.TrimSpace(dep))
+	return strings.TrimPrefix(dep, "select ")
+}
+
 func captureAlterPolicy(x *pgq.AlterPolicyStmt, raw *pgq.RawStmt, st *schema.SchemaState) error {
 	if x == nil || x.GetTable() == nil {
 		return nil
-	}
-	sql, err := deparseOne(raw)
-	if err != nil {
-		return err
 	}
 	tb := x.GetTable()
 	sch := tb.GetSchemaname()
@@ -290,9 +328,32 @@ func captureAlterPolicy(x *pgq.AlterPolicyStmt, raw *pgq.RawStmt, st *schema.Sch
 	k := schema.PolicyKey(sch, rel, pn)
 	prev := st.Policies[k]
 	if prev == nil {
-		return fmt.Errorf("ALTER POLICY %q: no prior CREATE POLICY in loaded schema; define CREATE POLICY first", k)
+		// CREATE POLICY not yet parsed (cross-file ordering) — buffer for second pass.
+		p := &schema.PendingAlterPol{Key: k}
+		if x.GetQual() != nil {
+			if u, e := deparseExprToSQL(x.GetQual()); e == nil {
+				p.UsingSQL = u
+			}
+		}
+		if x.GetWithCheck() != nil {
+			if w, e := deparseExprToSQL(x.GetWithCheck()); e == nil {
+				p.WithCheck = w
+			}
+		}
+		if r := policyRolesFromNodes(x.GetRoles()); len(r) > 0 {
+			p.Roles = r
+		}
+		st.PendingAlterPolicy = append(st.PendingAlterPolicy, p)
+		return nil
 	}
-	prev.DefSQL = sql
+	applyAlterPolicyToPrev(prev, x)
+	return nil
+}
+
+// applyAlterPolicyToPrev merges the ALTER POLICY changes into the existing desired policy.
+// DefSQL is rebuilt as a valid CREATE POLICY statement so that ChangeCreatePolicy
+// generates correct DDL (not an ALTER POLICY statement).
+func applyAlterPolicyToPrev(prev *schema.Policy, x *pgq.AlterPolicyStmt) {
 	if x.GetQual() != nil {
 		if u, e := deparseExprToSQL(x.GetQual()); e == nil {
 			prev.UsingSQL = u
@@ -306,5 +367,43 @@ func captureAlterPolicy(x *pgq.AlterPolicyStmt, raw *pgq.RawStmt, st *schema.Sch
 	if r := policyRolesFromNodes(x.GetRoles()); len(r) > 0 {
 		prev.Roles = r
 	}
-	return nil
+	prev.DefSQL = rebuildCreatePolicySQL(prev)
+}
+
+// rebuildCreatePolicySQL constructs a CREATE POLICY statement from a Policy's individual
+// fields. Used when ALTER POLICY modifies an existing desired policy so that DefSQL
+// stays a valid CREATE POLICY (ChangeCreatePolicy uses DefSQL as the migration DDL).
+func rebuildCreatePolicySQL(p *schema.Policy) string {
+	var sb strings.Builder
+	sb.WriteString("CREATE POLICY ")
+	sb.WriteString(p.Name)
+	sb.WriteString(" ON ")
+	if p.Schema != "" {
+		sb.WriteString(p.Schema)
+		sb.WriteString(".")
+	}
+	sb.WriteString(p.Table)
+	if !p.Permissive {
+		sb.WriteString(" AS RESTRICTIVE")
+	}
+	cmd := strings.ToLower(p.Cmd)
+	if cmd != "" && cmd != "*" && cmd != "all" {
+		sb.WriteString(" FOR ")
+		sb.WriteString(strings.ToUpper(cmd))
+	}
+	if len(p.Roles) > 0 {
+		sb.WriteString(" TO ")
+		sb.WriteString(strings.Join(p.Roles, ", "))
+	}
+	if p.UsingSQL != "" {
+		sb.WriteString(" USING (")
+		sb.WriteString(p.UsingSQL)
+		sb.WriteString(")")
+	}
+	if p.WithCheck != "" {
+		sb.WriteString(" WITH CHECK (")
+		sb.WriteString(p.WithCheck)
+		sb.WriteString(")")
+	}
+	return sb.String()
 }

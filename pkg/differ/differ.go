@@ -78,6 +78,18 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 		}
 		lk, hasMapping := liveKeyFor[dKey]
 		if hasChange(changes, dKey, plan.ChangeCreateTable) {
+			// For brand-new tables that have RLS enabled or forced in the source schema,
+			// we must emit TOGGLE_RLS after CREATE_TABLE — PostgreSQL creates tables with
+			// RLS disabled by default.
+			if dt.RLSEnabled || dt.RLSForced {
+				changes = append(changes, change{kind: plan.ChangeToggleRLS, sch: dt.Schema, tbl: dt.Name, wantRls: dt.RLSEnabled, wantForce: dt.RLSForced, had: false})
+			}
+			// For brand-new tables that have RLS enabled or forced in the source schema,
+			// we must emit TOGGLE_RLS after CREATE_TABLE — PostgreSQL creates tables with
+			// RLS disabled by default.
+			if dt.RLSEnabled || dt.RLSForced {
+				changes = append(changes, change{kind: plan.ChangeToggleRLS, sch: dt.Schema, tbl: dt.Name, wantRls: dt.RLSEnabled, wantForce: dt.RLSForced, had: false})
+			}
 			continue
 		}
 		var lt *schema.Table
@@ -113,6 +125,21 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 		changes = append(changes, change{kind: plan.ChangeDropTable, sch: p[0], tbl: p[1]})
 	}
 
+	// Build a per-table column rename map from changes accumulated above.
+	// Used by constraint and index diffing to avoid spurious DROP/ADD when a column
+	// is being renamed in the same migration (live DB still has old column names).
+	tableColRenames := map[string]map[string]string{}
+	for _, ch := range changes {
+		if ch.kind != plan.ChangeRenameColumn {
+			continue
+		}
+		key := schema.TableKey(ch.sch, ch.tbl)
+		if tableColRenames[key] == nil {
+			tableColRenames[key] = map[string]string{}
+		}
+		tableColRenames[key][ch.from] = ch.col
+	}
+
 	// Table-level CHECK / FOREIGN KEY (skip if table is created in this plan — embedded in CREATE TABLE)
 	for dKey, dt := range desired.Tables {
 		if dt == nil || dt.Deprecated {
@@ -131,16 +158,18 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 		if lt == nil {
 			continue
 		}
-		changes = append(changes, diffTableConstraints(dt, lt)...)
+		changes = append(changes, diffTableConstraints(dt, lt, tableColRenames[dKey])...)
 	}
-	changes = append(changes, diffIndexes(desired, live)...)
+	changes = append(changes, diffIndexes(desired, live, tableColRenames)...)
 	changes = append(changes, diffFunctions(desired, live)...)
 	changes = append(changes, diffPolicies(desired, live)...)
 	changes = append(changes, diffViews(desired, live)...)
 	changes = append(changes, diffSequences(desired, live)...)
 	changes = append(changes, diffTriggers(desired, live)...)
 	changes = append(changes, diffExtensions(desired, live)...)
-	changes = append(changes, diffExtraDDL(desired)...)
+	changes = append(changes, diffExtraDDL(desired, live)...)
+	changes = append(changes, diffMiscObjects(desired)...)
+	changes = injectViewRefreshForTypeChanges(changes, desired, live)
 	sortChangesDeterministic(desired, changes)
 	stmts := buildStatements(changes, desired, live, opt)
 	// attach hazard metadata
@@ -279,6 +308,25 @@ func colDiff(a, b *schema.Column) bool {
 		return true
 	}
 	if normDef(a.DefaultSQL) != normDef(b.DefaultSQL) {
+		// If one side has no default and the other is an implicit serial nextval
+		// default (owned sequence), treat them as equal — the serial sequence was
+		// created implicitly by bigserial/serial and is not tracked in the desired state.
+		if isImplicitSerialDefault(a.DefaultSQL, b.DefaultSQL) {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// isImplicitSerialDefault returns true when one side is empty (no desired default) and
+// the other is a nextval('...') expression that postgres injects for serial/bigserial columns.
+func isImplicitSerialDefault(a, b string) bool {
+	na, nb := normDef(a), normDef(b)
+	if na == "" && strings.HasPrefix(nb, "nextval(") {
+		return true
+	}
+	if nb == "" && strings.HasPrefix(na, "nextval(") {
 		return true
 	}
 	return false
@@ -295,14 +343,21 @@ func altersFor(schema, table string, w, h *schema.Column) []change {
 	if h.NotNull != w.NotNull {
 		o = append(o, change{kind: plan.ChangeAlterColumn, sch: schema, tbl: table, col: w.Name, dc: w, lc: h, alterKind: "notnull"})
 	}
-	if normDef(h.DefaultSQL) != normDef(w.DefaultSQL) {
+	if normDef(h.DefaultSQL) != normDef(w.DefaultSQL) && !isImplicitSerialDefault(h.DefaultSQL, w.DefaultSQL) {
 		o = append(o, change{kind: plan.ChangeAlterColumn, sch: schema, tbl: table, col: w.Name, dc: w, lc: h, alterKind: "def"})
 	}
 	return o
 }
 
 func normType(s string) string { return schema.NormalizeTypeForCompare(s) }
-func normDef(s string) string  { return strings.TrimSpace(strings.ToLower(s)) }
+
+// normDef normalises a default expression for comparison.
+// PostgreSQL stores typed literals like 'active'::user_status or ('draft'::text)::post_status
+// in the catalog, while the desired schema specifies bare literals like 'active'.
+// We round-trip through the pg_query deparser (stripping all type casts) so both forms compare equal.
+func normDef(s string) string {
+	return normExprForCompare(s)
+}
 
 func buildStatements(ch []change, _ *schema.SchemaState, _ *schema.SchemaState, opt Options) []plan.Statement {
 	var st []plan.Statement
@@ -459,7 +514,7 @@ func stmtFor(c change, opt Options) []plan.Statement {
 			return nil
 		}
 		return []plan.Statement{{OpType: string(c.kind), DDL: c.v.DefSQL, Object: schema.ViewKey(c.v.Schema, c.v.Name)}}
-	case plan.ChangeDropView:
+	case plan.ChangeDropView, plan.ChangeDropViewEarly:
 		if c.v == nil {
 			return nil
 		}
@@ -531,6 +586,13 @@ func stmtFor(c change, opt Options) []plan.Statement {
 			OpType: string(c.kind), DDL: ddl, Object: c.ext.Name,
 			Hazards: []hazard.Detected{{Type: hazard.NotReplicaSafe, Severity: hazard.SeverityAdvisory, Message: msg}},
 		}}
+	case plan.ChangeCreateType:
+		if strings.TrimSpace(c.rawSQL) == "" {
+			return nil
+		}
+		return []plan.Statement{{
+			OpType: string(c.kind), DDL: c.rawSQL, Object: "raw",
+		}}
 	case plan.ChangeRawSQL:
 		if strings.TrimSpace(c.rawSQL) == "" {
 			return nil
@@ -580,7 +642,7 @@ func alterStmt(c change) []plan.Statement {
 		if w.NotNull {
 			ddl := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET NOT NULL", ident(c.sch), ident(c.tbl), ident(c.col))
 			tk := schema.TableKey(c.sch, c.tbl)
-			out = append(out, plan.Statement{OpType: "SET_NOT_NULL", DDL: ddl, Object: tk, Hazards: []hazard.Detected{{Type: hazard.ConstraintScan, Severity: hazard.SeverityBlocking}}})
+			out = append(out, plan.Statement{OpType: "SET_NOT_NULL", DDL: ddl, Object: tk, Column: c.col, Hazards: []hazard.Detected{{Type: hazard.ConstraintScan, Severity: hazard.SeverityBlocking}}})
 		} else {
 			ddl := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s DROP NOT NULL", ident(c.sch), ident(c.tbl), ident(c.col))
 			out = append(out, plan.Statement{OpType: "DROP_NOT_NULL", DDL: ddl, Object: schema.TableKey(c.sch, c.tbl)})
@@ -657,7 +719,39 @@ func ident(s string) string {
 			return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 		}
 	}
+	if pgReservedKeywords[s] {
+		return `"` + s + `"`
+	}
 	return s
+}
+
+// pgReservedKeywords is the set of PostgreSQL reserved keywords that cannot be
+// used as unquoted identifiers (column/table/constraint names).
+// Source: https://www.postgresql.org/docs/current/sql-keywords-appendix.html (marked "reserved")
+var pgReservedKeywords = map[string]bool{
+	"all": true, "analyse": true, "analyze": true, "and": true, "any": true,
+	"array": true, "as": true, "asc": true, "asymmetric": true, "authorization": true,
+	"binary": true, "both": true, "case": true, "cast": true, "check": true,
+	"collate": true, "collation": true, "column": true, "concurrently": true,
+	"constraint": true, "create": true, "cross": true, "current_catalog": true,
+	"current_date": true, "current_role": true, "current_schema": true,
+	"current_time": true, "current_timestamp": true, "current_user": true,
+	"default": true, "deferrable": true, "desc": true, "distinct": true,
+	"do": true, "else": true, "end": true, "except": true, "false": true,
+	"fetch": true, "for": true, "foreign": true, "freeze": true, "from": true,
+	"full": true, "grant": true, "group": true, "having": true, "ilike": true,
+	"in": true, "initially": true, "inner": true, "intersect": true, "into": true,
+	"is": true, "isnull": true, "join": true, "lateral": true, "leading": true,
+	"left": true, "like": true, "limit": true, "localtime": true, "localtimestamp": true,
+	"natural": true, "not": true, "notnull": true, "null": true, "offset": true,
+	"on": true, "only": true, "or": true, "order": true, "outer": true,
+	"overlaps": true, "placing": true, "primary": true, "references": true,
+	"returning": true, "right": true, "select": true, "session_user": true,
+	"similar": true, "some": true, "symmetric": true, "table": true,
+	"tablesample": true, "then": true, "to": true, "trailing": true,
+	"true": true, "union": true, "unique": true, "user": true, "using": true,
+	"variadic": true, "verbose": true, "when": true, "where": true,
+	"window": true, "with": true,
 }
 
 func attachHazard(s *plan.Statement) {
@@ -684,24 +778,71 @@ func enrichHazardsFromOptions(stmts *[]plan.Statement, opt Options) {
 	if opt.Reltuples == nil || opt.SetNotNullReltupleThreshold <= 0 {
 		return
 	}
-	for i := range *stmts {
-		s := &(*stmts)[i]
+	var out []plan.Statement
+	changed := false
+	for _, s := range *stmts {
 		if s.OpType != "SET_NOT_NULL" {
+			out = append(out, s)
 			continue
 		}
 		n, ok := opt.Reltuples[strings.ToLower(strings.TrimSpace(s.Object))]
-		if !ok {
+		if !ok || n < opt.SetNotNullReltupleThreshold {
+			out = append(out, s)
 			continue
 		}
-		if n < opt.SetNotNullReltupleThreshold {
-			continue
-		}
-		s.Hazards = append(s.Hazards, hazard.Detected{
+		// Large table: replace the single SET NOT NULL with the 4-step staged plan.
+		// Column may be raw name; sanitize to a valid identifier for the constraint name.
+		colSanitized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+				return r
+			}
+			return '_'
+		}, strings.ToLower(s.Column))
+		conName := "pgflux_notnull_" + colSanitized
+		tbl := s.Object // "schema.table" already formatted
+		colIdent := ident(s.Column)
+		checkExpr := colIdent + " IS NOT NULL"
+		advisory := hazard.Detected{
 			Type:     hazard.StagedSetNotNull,
 			Severity: hazard.SeverityAdvisory,
-			Message:  fmt.Sprintf("Large table (~%.0f est. rows): consider staged SET NOT NULL (see hazard.StagedSetNotNullSteps)", n),
+			Message:  fmt.Sprintf("Large table (~%.0f est. rows): using staged SET NOT NULL (4-step safe pattern)", n),
+		}
+		// Step 1: ADD CONSTRAINT ... NOT VALID (short lock, in transaction)
+		out = append(out, plan.Statement{
+			OpType:  "STAGED_NOT_NULL_ADD_CONSTRAINT",
+			Object:  tbl,
+			Column:  s.Column,
+			DDL:     fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s) NOT VALID", tbl, conName, checkExpr),
+			Hazards: []hazard.Detected{advisory},
 		})
-		recomputeStatementBlocking(s)
+		// Step 2: VALIDATE CONSTRAINT (long scan, ShareUpdateExclusiveLock, run concurrent/outside tx)
+		out = append(out, plan.Statement{
+			OpType:       "STAGED_NOT_NULL_VALIDATE",
+			Object:       tbl,
+			Column:       s.Column,
+			DDL:          fmt.Sprintf("ALTER TABLE %s VALIDATE CONSTRAINT %s", tbl, conName),
+			IsConcurrent: true,
+			Hazards:      []hazard.Detected{advisory},
+		})
+		// Step 3: SET NOT NULL (very fast now that constraint is validated, in transaction)
+		out = append(out, plan.Statement{
+			OpType:  "STAGED_NOT_NULL_SET",
+			Object:  tbl,
+			Column:  s.Column,
+			DDL:     fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL", tbl, colIdent),
+			Hazards: []hazard.Detected{advisory},
+		})
+		// Step 4: DROP helper constraint (in transaction)
+		out = append(out, plan.Statement{
+			OpType: "STAGED_NOT_NULL_DROP_CONSTRAINT",
+			Object: tbl,
+			Column: s.Column,
+			DDL:    fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s", tbl, conName),
+		})
+		changed = true
+	}
+	if changed {
+		*stmts = out
 	}
 }
 

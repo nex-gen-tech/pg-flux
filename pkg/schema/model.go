@@ -12,10 +12,40 @@ type SchemaState struct {
 	Triggers  map[string]*Trigger
 	// Extensions: desired + live (from pg_extension / parsed CREATE EXTENSION).
 	Extensions map[string]*Extension
+	// UserTypes tracks user-defined type names (enums, domains, composite types) keyed
+	// by "schema.name". Populated by the inspector from the live DB; used by the differ
+	// to skip CREATE TYPE when the type already exists.
+	UserTypes map[string]struct{}
+	// EnumValues holds the ordered enum labels for each live enum type keyed by "schema.name".
+	// Used by the differ to detect newly added enum values and emit ALTER TYPE ... ADD VALUE.
+	EnumValues map[string][]string
+	// PendingRLS holds RLS enable/force flags for tables that may not yet exist when
+	// ALTER TABLE ... ENABLE ROW LEVEL SECURITY is parsed (cross-file ordering issue).
+	// Applied as a post-processing step in LoadDesiredState. Not used by the inspector.
+	PendingRLS map[string]*RLSFlags
+	// PendingAlterPolicy holds ALTER POLICY statements that arrived before their CREATE POLICY
+	// (cross-file ordering). Applied as a post-processing step in LoadDesiredState.
+	PendingAlterPolicy []*PendingAlterPol
 	// ExtraDDL holds pass-through statements (e.g. ALTER TABLE … ATTACH PARTITION) kept in order.
 	ExtraDDL []string
 	// MiscObjects lists recognized but not fully modeled objects (FDW, event triggers, etc.).
 	MiscObjects []*MiscObject
+}
+
+// RLSFlags carries pending RLS enable/force flags for a table.
+type RLSFlags struct {
+	Enabled    bool
+	EnabledSet bool
+	Forced     bool
+	ForcedSet  bool
+}
+
+// PendingAlterPol holds an ALTER POLICY that arrived before its CREATE POLICY was parsed.
+type PendingAlterPol struct {
+	Key       string // PolicyKey
+	UsingSQL  string
+	WithCheck string
+	Roles     []string
 }
 
 // TableKey returns qualified name: "schema.relation" (unquoted, lowercased for lookup unless quoted).
@@ -91,6 +121,18 @@ func (s *SchemaState) Clone() *SchemaState {
 			}
 			ce := *e
 			out.Extensions[k] = &ce
+		}
+	}
+	if len(s.UserTypes) > 0 {
+		out.UserTypes = make(map[string]struct{}, len(s.UserTypes))
+		for k := range s.UserTypes {
+			out.UserTypes[k] = struct{}{}
+		}
+	}
+	if len(s.EnumValues) > 0 {
+		out.EnumValues = make(map[string][]string, len(s.EnumValues))
+		for k, v := range s.EnumValues {
+			out.EnumValues[k] = append([]string(nil), v...)
 		}
 	}
 	for k, t := range s.Tables {

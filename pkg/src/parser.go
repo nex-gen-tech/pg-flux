@@ -66,6 +66,39 @@ func LoadDesiredState(opt LoadOptions) (*schema.SchemaState, error) {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 	}
+	// Second pass: apply any pending RLS flags to tables that now exist
+	// (ALTER TABLE ... ENABLE ROW LEVEL SECURITY may be in a file that sorts
+	// before the CREATE TABLE file, so the table did not exist on first pass).
+	for key, flags := range st.PendingRLS {
+		if t := st.Tables[key]; t != nil {
+			if flags.EnabledSet {
+				t.RLSEnabled = flags.Enabled
+			}
+			if flags.ForcedSet {
+				t.RLSForced = flags.Forced
+			}
+		}
+	}
+	st.PendingRLS = nil
+	// Second pass: apply any buffered ALTER POLICY statements whose CREATE POLICY
+	// was in a file that sorted after the ALTER POLICY file (cross-file ordering).
+	for _, p := range st.PendingAlterPolicy {
+		prev := st.Policies[p.Key]
+		if prev == nil {
+			return nil, fmt.Errorf("ALTER POLICY %q: CREATE POLICY not found in schema after all files loaded", p.Key)
+		}
+		if p.UsingSQL != "" {
+			prev.UsingSQL = p.UsingSQL
+		}
+		if p.WithCheck != "" {
+			prev.WithCheck = p.WithCheck
+		}
+		if len(p.Roles) > 0 {
+			prev.Roles = p.Roles
+		}
+		prev.DefSQL = rebuildCreatePolicySQL(prev)
+	}
+	st.PendingAlterPolicy = nil
 	return st, nil
 }
 
@@ -140,6 +173,12 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 	if cs == nil || cs.GetRelation() == nil {
 		return nil
 	}
+	// Partition children (CREATE TABLE t PARTITION OF parent FOR VALUES ...) are not
+	// modeled as first-class schema objects — they inherit structure from the parent.
+	// Capture as ExtraDDL so they are applied as raw SQL in plan order.
+	if cs.GetPartbound() != nil {
+		return captureDeparsedExtraDDL(raw, st)
+	}
 	rv := cs.GetRelation()
 	schemaName := rv.GetSchemaname()
 	if schemaName == "" {
@@ -158,7 +197,15 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 		Schema: schemaName,
 		Name:   tableName,
 	}
-	createLine := lineIndex0ForByte(content, int(raw.GetStmtLocation()))
+	// raw.GetStmtLocation() returns 0 for the first statement in a file even when
+	// the CREATE TABLE keyword appears after leading comments (a pg_query quirk).
+	// Scan forward from StmtLocation to find the actual "CREATE TABLE" keyword.
+	stmtLoc := int(raw.GetStmtLocation())
+	createKWOff := strings.Index(strings.ToUpper(content[stmtLoc:]), "CREATE TABLE")
+	if createKWOff < 0 {
+		createKWOff = 0
+	}
+	createLine := lineIndex0ForByte(content, stmtLoc+createKWOff)
 	if p := previousNonEmptyLineIndex(lines, createLine); p >= 0 {
 		ln := lineByIndex0(lines, p)
 		if from, ok := extractRenameFromComment(ln); ok {
@@ -207,6 +254,20 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 						col.NotNull = true // PRIMARY KEY implies NOT NULL
 					case pgq.ConstrType_CONSTR_NOTNULL:
 						col.NotNull = true
+					case pgq.ConstrType_CONSTR_DEFAULT:
+						if cc.GetRawExpr() != nil {
+							ds, err := defaultExprToSQL(cc.GetRawExpr())
+							if err != nil {
+								return err
+							}
+							col.DefaultSQL = strings.TrimSpace(ds)
+						}
+					case pgq.ConstrType_CONSTR_FOREIGN:
+						// Inline column-level REFERENCES: auto-generate a name following the
+						// PostgreSQL convention of {table}_{column}_fkey.
+						cn := strings.ToLower(t.Name) + "_" + strings.ToLower(col.Name) + "_fkey"
+						def := buildInlineForeignKeySQL(col.Name, cc)
+						t.ForeignKeys = append(t.ForeignKeys, &schema.TableForeignKey{Name: cn, DefSQL: def})
 					}
 				}
 			}

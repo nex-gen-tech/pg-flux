@@ -131,6 +131,12 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 		return nil, err
 	}
 	st.Extensions = em
+	utm, enumVals, err := loadUserTypeMap(ctx, pool, schemas)
+	if err != nil {
+		return nil, err
+	}
+	st.UserTypes = utm
+	st.EnumValues = enumVals
 	return st, nil
 }
 
@@ -227,6 +233,10 @@ func loadFunctionMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 		JOIN pg_namespace n ON n.oid = p.pronamespace
 		JOIN pg_language l ON l.oid = p.prolang
 		WHERE n.nspname = ANY($1) AND p.prokind IN ('f', 'a', 'w')
+		  AND NOT EXISTS (
+		    SELECT 1 FROM pg_depend d
+		    WHERE d.objid = p.oid AND d.deptype = 'e'
+		  )
 	`, schemas)
 	if err != nil {
 		return nil, fmt.Errorf("function query: %w", err)
@@ -277,7 +287,8 @@ func loadPolicyMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 	defer rows.Close()
 	out := make(map[string]*schema.Policy)
 	for rows.Next() {
-		var sn, tname, polname, cmd, us, wchk, roles string
+		var sn, tname, polname, cmd, roles string
+		var us, wchk *string // nullable: may be NULL when expression is not set
 		var perm bool
 		if err := rows.Scan(&sn, &tname, &polname, &cmd, &perm, &us, &wchk, &roles); err != nil {
 			return nil, err
@@ -291,7 +302,15 @@ func loadPolicyMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 				}
 			}
 		}
-		out[k] = &schema.Policy{Schema: sn, Table: strings.ToLower(tname), Name: polname, Cmd: cmd, Permissive: perm, UsingSQL: us, WithCheck: wchk, Roles: rlist}
+		usingSQL := ""
+		if us != nil {
+			usingSQL = *us
+		}
+		withCheck := ""
+		if wchk != nil {
+			withCheck = *wchk
+		}
+		out[k] = &schema.Policy{Schema: sn, Table: strings.ToLower(tname), Name: polname, Cmd: cmd, Permissive: perm, UsingSQL: usingSQL, WithCheck: withCheck, Roles: rlist}
 	}
 	return out, rows.Err()
 }

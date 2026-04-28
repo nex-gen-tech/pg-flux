@@ -1,6 +1,7 @@
 package differ
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/nexg/pg-flux/pkg/plan"
@@ -28,7 +29,7 @@ func fpGenericSQL(s string) string {
 	return fpSQL(s)
 }
 
-func diffTableConstraints(dt, lt *schema.Table) []change {
+func diffTableConstraints(dt, lt *schema.Table, colRenames map[string]string) []change {
 	var out []change
 	if dt == nil || lt == nil {
 		return out
@@ -94,11 +95,11 @@ func diffTableConstraints(dt, lt *schema.Table) []change {
 				conDef:  dv.def,
 			})
 		} else {
-			if tableConstraintDefFingerprint(dt.Schema, dt.Name, n, dv.def) != tableConstraintDefFingerprint(dt.Schema, dt.Name, n, lv.def) {
+			if tableConstraintDefFingerprint(dt.Schema, dt.Name, n, dv.def) != tableConstraintDefFingerprint(dt.Schema, dt.Name, n, applyColRenames(lv.def, colRenames)) {
 				out = append(out, change{
 					kind:    plan.ChangeDropConstraint,
-					sch:     lt.Schema,
-					tbl:     lt.Name,
+					sch:     dt.Schema,
+					tbl:     dt.Name,
 					conName: n,
 					conKind: lv.kind,
 					conDef:  lv.def,
@@ -118,8 +119,8 @@ func diffTableConstraints(dt, lt *schema.Table) []change {
 		if _, ok := dm[n]; !ok {
 			out = append(out, change{
 				kind:    plan.ChangeDropConstraint,
-				sch:     lt.Schema,
-				tbl:     lt.Name,
+				sch:     dt.Schema,
+				tbl:     dt.Name,
 				conName: n,
 				conKind: lv.kind,
 				conDef:  lv.def,
@@ -127,6 +128,82 @@ func diffTableConstraints(dt, lt *schema.Table) []change {
 		}
 	}
 	return out
+}
+
+// injectViewRefreshForTypeChanges ensures that views referencing a table whose column
+// type is being changed are dropped before and re-created after the ALTER COLUMN TYPE.
+// PostgreSQL refuses to ALTER the type of a column used by a view or rule.
+func injectViewRefreshForTypeChanges(changes []change, desired, live *schema.SchemaState) []change {
+	// Collect tables that have a column type change.
+	typeChangedTables := map[string]bool{} // schema.table key
+	for _, c := range changes {
+		if c.kind == plan.ChangeAlterColumn && c.alterKind == "type" {
+			typeChangedTables[schema.TableKey(c.sch, c.tbl)] = true
+		}
+	}
+	if len(typeChangedTables) == 0 {
+		return changes
+	}
+
+	// Determine which views need to be dropped early (before ALTER_COLUMN_TYPE).
+	needsEarlyDrop := map[string]bool{} // view key
+	for vk, dv := range desired.Views {
+		if dv == nil {
+			continue
+		}
+		for tk := range typeChangedTables {
+			parts := strings.SplitN(tk, ".", 2)
+			tblName := parts[len(parts)-1]
+			re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblName) + `\b`)
+			if re.MatchString(dv.DefSQL) {
+				needsEarlyDrop[vk] = true
+				break
+			}
+		}
+	}
+	if len(needsEarlyDrop) == 0 {
+		return changes
+	}
+
+	// Upgrade any existing ChangeDropView to ChangeDropViewEarly for views that
+	// need an early drop. This handles the case where the view is also being modified
+	// (diffViews already produced a DROP_VIEW at priority 16, but we need priority 3).
+	alreadyHandled := map[string]bool{}
+	for i := range changes {
+		c := &changes[i]
+		if c.kind == plan.ChangeDropView && c.v != nil {
+			vk := schema.ViewKey(c.v.Schema, c.v.Name)
+			if needsEarlyDrop[vk] {
+				c.kind = plan.ChangeDropViewEarly
+				alreadyHandled[vk] = true
+			}
+		}
+		if c.kind == plan.ChangeDropViewEarly && c.v != nil {
+			alreadyHandled[schema.ViewKey(c.v.Schema, c.v.Name)] = true
+		}
+	}
+
+	// For views not yet in the change list at all, add DROP_VIEW_EARLY + CREATE_VIEW.
+	var extra []change
+	for vk := range needsEarlyDrop {
+		if alreadyHandled[vk] {
+			continue
+		}
+		dv := desired.Views[vk]
+		if dv == nil {
+			continue
+		}
+		lv := live.Views[vk]
+		if lv == nil {
+			continue // view is new — nothing to drop
+		}
+		extra = append(extra, change{kind: plan.ChangeDropViewEarly, v: lv, viewKey: vk})
+		extra = append(extra, change{kind: plan.ChangeCreateView, v: dv})
+	}
+	if len(extra) == 0 {
+		return changes
+	}
+	return append(changes, extra...)
 }
 
 func diffViews(d, l *schema.SchemaState) []change {
@@ -171,7 +248,7 @@ func diffSequences(d, l *schema.SchemaState) []change {
 			out = append(out, change{kind: plan.ChangeCreateSequence, seq: ds})
 			continue
 		}
-		if fpGenericSQL(ds.DefSQL) != fpGenericSQL(ls.DefSQL) {
+		if !seqParamsEqual(ds.DefSQL, ls.DefSQL) {
 			out = append(out, change{kind: plan.ChangeDropSequence, seq: ls, dropSeq: k})
 			out = append(out, change{kind: plan.ChangeCreateSequence, seq: ds})
 		}

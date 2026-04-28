@@ -21,13 +21,13 @@ var createOrder = map[string]int{
 	"VALIDATE_TABLE_CONSTRAINT": 6,
 	"CREATE_AGGREGATE":          7,
 	"CREATE_WINDOW_FUNCTION":    7,
+	"DROP_POLICY":               8, // must run BEFORE CREATE_POLICY to allow replacing a policy by name
 	"CREATE_POLICY":             9,
 	"CREATE_INDEX":              20,
 	"ALTER_DEFAULT":             4,
 	"ALTER_COLUMN_TYPE":         4,
 	"SET_NOT_NULL":              5,
 	"DROP_NOT_NULL":             5,
-	"DROP_POLICY":               15,
 	"DROP_INDEX":                18,
 	"DROP_FUNCTION":             19,
 	"DROP_TABLE":                100,
@@ -35,11 +35,11 @@ var createOrder = map[string]int{
 	"ADD_COLUMN!":               3,
 	"ADD_TABLE_CONSTRAINT":      6,
 	"CREATE_SEQUENCE":           5,
-	"CREATE_VIEW":               35,
 	"CREATE_TRIGGER":            14,
 	"CREATE_MATERIALIZED_VIEW":  35,
 	"DROP_VIEW":                 16,
-	"DROP_SEQUENCE":             17,
+	"DROP_VIEW_EARLY":           3, // DROP VIEW injected to unblock ALTER COLUMN TYPE
+	"DROP_SEQUENCE":             4,
 	"DROP_TRIGGER":              15,
 	"DROP_TABLE_CONSTRAINT":     4,
 }

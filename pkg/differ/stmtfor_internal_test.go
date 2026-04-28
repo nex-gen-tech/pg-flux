@@ -125,11 +125,18 @@ func TestRewriteIndexConcurrent(t *testing.T) {
 
 func TestEnrichHazardsFromOptions_reltuple(t *testing.T) {
 	stm := []plan.Statement{{
-		OpType: "SET_NOT_NULL", Object: "public.t",
+		OpType: "SET_NOT_NULL", Object: "public.t", Column: "email",
 		Hazards: []hazard.Detected{{Type: hazard.ConstraintScan, Severity: hazard.SeverityBlocking},
 		}}}
 	enrichHazardsFromOptions(&stm, Options{Reltuples: map[string]float64{"public.t": 5e6}, SetNotNullReltupleThreshold: 1})
-	require.Greater(t, len(stm[0].Hazards), 1)
+	// Large table: single SET_NOT_NULL replaced by 4-step staged plan.
+	require.Equal(t, 4, len(stm))
+	require.Equal(t, "STAGED_NOT_NULL_ADD_CONSTRAINT", stm[0].OpType)
+	require.Contains(t, stm[0].DDL, "NOT VALID")
+	require.Equal(t, "STAGED_NOT_NULL_VALIDATE", stm[1].OpType)
+	require.True(t, stm[1].IsConcurrent)
+	require.Equal(t, "STAGED_NOT_NULL_SET", stm[2].OpType)
+	require.Equal(t, "STAGED_NOT_NULL_DROP_CONSTRAINT", stm[3].OpType)
 }
 
 func TestBuildStatements_merges(t *testing.T) {

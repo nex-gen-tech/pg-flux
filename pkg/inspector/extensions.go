@@ -14,7 +14,7 @@ func loadExtensionMap(ctx context.Context, pool *pgxpool.Pool) (map[string]*sche
 	rows, err := pool.Query(ctx, `
 		SELECT extname,
 			extversion,
-			'CREATE EXTENSION IF NOT EXISTS ' || quote_ident(extname) || ' CASCADE'
+			'CREATE EXTENSION IF NOT EXISTS ' || quote_ident(extname)
 		FROM pg_extension
 		WHERE extname NOT IN ('plpgsql')
 		ORDER BY extname

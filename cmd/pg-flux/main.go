@@ -1,20 +1,25 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/nexg/pg-flux/pkg/db"
 	"github.com/nexg/pg-flux/pkg/differ"
 	"github.com/nexg/pg-flux/pkg/exec"
 	"github.com/nexg/pg-flux/pkg/hashstate"
 	"github.com/nexg/pg-flux/pkg/inspector"
+	"github.com/nexg/pg-flux/pkg/migrate"
 	"github.com/nexg/pg-flux/pkg/plan"
 	"github.com/nexg/pg-flux/pkg/render"
 	"github.com/nexg/pg-flux/pkg/schema"
@@ -36,10 +41,45 @@ var (
 	shadowDSN        string
 	shadowSemanticF  bool
 	shadowEquivF     bool
+	configFile       string
+	migrationsDir    string
+	trackingSchema   string
 )
+
+// pgfluxConfig mirrors the .pg-flux.yml config file format.
+type pgfluxConfig struct {
+	Version        int      `yaml:"version"`
+	SchemaDir      string   `yaml:"schema_dir"`
+	TargetSchemas  []string `yaml:"target_schemas"`
+	MigrationsDir  string   `yaml:"migrations_dir"`
+	TrackingSchema string   `yaml:"tracking_schema"`
+}
+
+// loadConfig reads a .pg-flux.yml config file. Missing file is not an error.
+func loadConfig(path string) (*pgfluxConfig, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &pgfluxConfig{}, nil
+		}
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
+	var c pgfluxConfig
+	if err := yaml.Unmarshal(b, &c); err != nil {
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
+	return &c, nil
+}
+
+// errDriftDetected is a sentinel returned by cmdDrift when schema differs from desired state.
+// main() translates this to exit code 1 without printing a redundant message.
+var errDriftDetected = errors.New("drift: schema has changed")
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
+		if errors.Is(err, errDriftDetected) {
+			os.Exit(1)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -61,7 +101,32 @@ func newRoot() *cobra.Command {
 	r.PersistentFlags().StringVar(&shadowDSN, "shadow-dsn", os.Getenv("PGFLUX_SHADOW_DSN"), "optional disposable DB DSN for shadow validation (see --shadow-semantic, --shadow-equivalence)")
 	r.PersistentFlags().BoolVar(&shadowSemanticF, "shadow-semantic", false, "if set with --shadow-dsn, apply the plan with autocommit on that DB (mutates DB — use disposable instance; stronger than rolled-back syntax check)")
 	r.PersistentFlags().BoolVar(&shadowEquivF, "shadow-equivalence", false, "with --shadow-dsn, run semantic apply on an empty shadow DB then require inspected catalog to match desired (structural check; not a formal proof vs production)")
-	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect())
+	r.PersistentFlags().StringVar(&configFile, "config", ".pg-flux.yml", "path to config file")
+	r.PersistentFlags().StringVar(&migrationsDir, "migrations-dir", "./migrations", "directory for migration .sql files")
+	r.PersistentFlags().StringVar(&trackingSchema, "tracking-schema", "_pgflux", "schema used to track applied migrations")
+	r.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig(configFile)
+		if err != nil {
+			return err
+		}
+		pf := r.PersistentFlags()
+		// Apply config file values only when the corresponding CLI flag was not
+		// explicitly provided (config < CLI flag precedence).
+		if cfg.SchemaDir != "" && !pf.Changed("schema") && !pf.Changed("schema-dir") {
+			schemaPath = cfg.SchemaDir
+		}
+		if len(cfg.TargetSchemas) > 0 && !pf.Changed("schemas") {
+			schemasFlag = strings.Join(cfg.TargetSchemas, ",")
+		}
+		if cfg.MigrationsDir != "" && !pf.Changed("migrations-dir") {
+			migrationsDir = cfg.MigrationsDir
+		}
+		if cfg.TrackingSchema != "" && !pf.Changed("tracking-schema") {
+			trackingSchema = cfg.TrackingSchema
+		}
+		return nil
+	}
+	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate())
 	return r
 }
 
@@ -86,36 +151,202 @@ func loadDesired() (*schema.SchemaState, error) {
 }
 
 func cmdInit() *cobra.Command {
-	var dir, dbname string
+	var dir, migrDir, dbname string
 	withEx := true
 	c := &cobra.Command{
 		Use:   "init",
-		Short: "Scaffold .pg-flux.yml and example SQL",
+		Short: "Scaffold .pg-flux.yml, schema dir, and migrations dir",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			stdin := bufio.NewReader(os.Stdin)
+
+			// Prompt for schema dir when interactive and flag not set.
+			if !cmd.Flags().Changed("dir") && isTerminal(os.Stdin) {
+				fmt.Fprintf(cmd.OutOrStdout(), "Schema directory [%s]: ", dir)
+				if line, _ := stdin.ReadString('\n'); strings.TrimSpace(line) != "" {
+					dir = strings.TrimSpace(line)
+				}
+			}
+			// Prompt for migrations dir when interactive and flag not set.
+			if !cmd.Flags().Changed("migrations-dir") && isTerminal(os.Stdin) {
+				fmt.Fprintf(cmd.OutOrStdout(), "Migrations directory [%s]: ", migrDir)
+				if line, _ := stdin.ReadString('\n'); strings.TrimSpace(line) != "" {
+					migrDir = strings.TrimSpace(line)
+				}
+			}
+
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return err
 			}
-			if _, err := os.Stat(dir + "/.pg-flux.yml"); err == nil {
-				return fmt.Errorf("refusing to overwrite %s/.pg-flux.yml", dir)
-			}
-			if err := os.WriteFile(dir+"/.pg-flux.yml", []byte("version: 1\nschema_dir: ./\ntarget_schemas: [ public ]\n"), 0o644); err != nil {
+			if err := os.MkdirAll(migrDir, 0o755); err != nil {
 				return err
 			}
-			for _, sub := range []string{"tables", "functions", "policies", "indexes", "types"} {
-				_ = os.MkdirAll(dir+"/"+sub, 0o755)
+
+			cfgPath := ".pg-flux.yml"
+			if _, err := os.Stat(cfgPath); err == nil {
+				return fmt.Errorf("refusing to overwrite %s", cfgPath)
 			}
+			cfgContent := fmt.Sprintf(
+				"version: 1\nschema_dir: %s\nmigrations_dir: %s\ntarget_schemas: [ public ]\n",
+				dir, migrDir)
+			if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+				return err
+			}
+
 			if withEx {
-				ex := "-- Example\nCREATE TABLE example_users (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  email text NOT NULL\n);\n"
-				_ = os.WriteFile(dir+"/tables/example_users.sql", []byte(ex), 0o644)
+				ex := "-- Example table. Rename or replace with your own schema.\n" +
+					"CREATE TABLE public.users (\n" +
+					"  id         bigserial   PRIMARY KEY,\n" +
+					"  email      text        NOT NULL,\n" +
+					"  username   text        NOT NULL,\n" +
+					"  created_at timestamptz NOT NULL DEFAULT now(),\n\n" +
+					"  CONSTRAINT users_email_unique    UNIQUE (email),\n" +
+					"  CONSTRAINT users_username_unique UNIQUE (username),\n" +
+					"  CONSTRAINT users_email_format    CHECK  (email LIKE '%@%')\n" +
+					");\n\n" +
+					"CREATE INDEX idx_users_email   ON public.users (email);\n" +
+					"CREATE INDEX idx_users_created ON public.users (created_at DESC);\n"
+				_ = os.WriteFile(dir+"/users.sql", []byte(ex), 0o644)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Initialized in %s (db-name=%q). Next: pg-flux plan --db $DATABASE_URL --schema %s\n", dir, dbname, dir)
+
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"Initialized (db-name=%q).\n  schema_dir: %s\n  migrations_dir: %s\nNext: pg-flux plan --db $DATABASE_URL\n",
+				dbname, dir, migrDir)
 			return nil
 		},
 	}
-	c.Flags().StringVar(&dir, "dir", "./schema", "target directory")
+	c.Flags().StringVar(&dir, "dir", "./schema", "schema directory")
+	c.Flags().StringVar(&migrDir, "migrations-dir", "./migrations", "migrations directory")
 	c.Flags().StringVar(&dbname, "db-name", "myapp", "label in messages")
 	c.Flags().BoolVar(&withEx, "with-examples", true, "write example_users.sql")
 	return c
+}
+
+// isTerminal returns true when f is a real TTY.
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func cmdMigrate() *cobra.Command {
+	m := &cobra.Command{
+		Use:   "migrate",
+		Short: "Manage timestamped migration files",
+	}
+	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus())
+	return m
+}
+
+func cmdMigrateGenerate() *cobra.Command {
+	var label string
+	c := &cobra.Command{
+		Use:   "generate",
+		Short: "Generate a new migration file from schema diff",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			des, err := loadDesired()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			res, err := migrate.Generate(ctx, pool, des, migrate.GenerateOptions{
+				MigrationsDir: migrationsDir,
+				Label:         label,
+				Schemas:       parseSchemas(),
+			})
+			if err != nil {
+				return err
+			}
+			if res.Filename == "" {
+				fmt.Fprintln(cmd.OutOrStdout(), "No changes detected — no migration generated.")
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Generated: %s (%d statements)\n", res.Filename, len(res.Statements))
+			return nil
+		},
+	}
+	c.Flags().StringVar(&label, "label", "", "short description appended to the filename")
+	return c
+}
+
+func cmdMigrateApply() *cobra.Command {
+	var dry bool
+	c := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply pending migration files to the database",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			res, err := migrate.Apply(ctx, pool, migrate.ApplyOptions{
+				MigrationsDir:  migrationsDir,
+				TrackingSchema: trackingSchema,
+				DryRun:         dry,
+				Progress:       cmd.OutOrStdout(),
+			})
+			if err != nil {
+				return err
+			}
+			if dry {
+				fmt.Fprintf(cmd.OutOrStdout(), "\nDry run: %d pending, %d already applied.\n", len(res.Applied), len(res.Skipped))
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "\nApplied %d migration(s), %d already up to date.\n", len(res.Applied), len(res.Skipped))
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&dry, "dry-run", false, "show what would be applied without executing")
+	return c
+}
+
+func cmdMigrateStatus() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show applied / pending migration files",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			statuses, err := migrate.Status(ctx, pool, migrate.StatusOptions{
+				MigrationsDir:  migrationsDir,
+				TrackingSchema: trackingSchema,
+			})
+			if err != nil {
+				return err
+			}
+			if len(statuses) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No migration files found.")
+				return nil
+			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "STATUS\tFILENAME\tAPPLIED AT")
+			for _, s := range statuses {
+				status := "pending"
+				at := ""
+				if s.Applied {
+					status = "applied"
+					at = s.AppliedAt
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\n", status, s.Filename, at)
+			}
+			return w.Flush()
+		},
+	}
 }
 
 func cmdPlan() *cobra.Command {
@@ -183,7 +414,8 @@ func cmdPlan() *cobra.Command {
 }
 
 func cmdApply() *cobra.Command {
-	dry := false
+	var dry bool
+	var stmtTimeout string
 	c := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply planned DDL",
@@ -203,17 +435,23 @@ func cmdApply() *cobra.Command {
 				return err
 			}
 			defer pool.Close()
-			return exec.Apply(ctx, pool, dr.Plan, exec.Options{DryRun: dry})
+			return exec.Apply(ctx, pool, dr.Plan, exec.Options{
+				DryRun:           dry,
+				StatementTimeout: stmtTimeout,
+				Progress:         cmd.OutOrStdout(),
+			})
 		},
 	}
 	c.Flags().BoolVar(&dry, "dry-run", false, "do not execute")
+	c.Flags().StringVar(&stmtTimeout, "statement-timeout", "0", "per-statement timeout passed to SET LOCAL statement_timeout (e.g. 20min; 0 = unlimited)")
 	return c
 }
 
 func cmdDrift() *cobra.Command {
-	return &cobra.Command{
-		Use:   "drift",
-		Short: "Exit 1 if live DB differs from desired SQL",
+	c := &cobra.Command{
+		Use:          "drift",
+		Short:        "Exit 1 if live DB differs from desired SQL",
+		SilenceErrors: true, // main() handles errDriftDetected without printing it
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dr, err := runDiff()
 			if err != nil {
@@ -221,7 +459,13 @@ func cmdDrift() *cobra.Command {
 			}
 			diffs := diffSummary(dr.Plan)
 			if globalFormat == "json" {
-				return render.DriftToJSON(cmd.OutOrStdout(), render.DriftJSON{IsDrift: len(diffs) > 0, Differences: diffs})
+				if err := render.DriftToJSON(cmd.OutOrStdout(), render.DriftJSON{IsDrift: len(diffs) > 0, Differences: diffs}); err != nil {
+					return err
+				}
+				if len(diffs) > 0 {
+					return errDriftDetected
+				}
+				return nil
 			}
 			if len(diffs) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No drift.")
@@ -230,10 +474,10 @@ func cmdDrift() *cobra.Command {
 			for _, d := range diffs {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s: %s\n", d.ObjectType, d.ObjectName, d.Details)
 			}
-			os.Exit(1)
-			return nil
+			return errDriftDetected
 		},
 	}
+	return c
 }
 
 func cmdInspect() *cobra.Command {

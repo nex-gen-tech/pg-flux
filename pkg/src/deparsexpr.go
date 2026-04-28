@@ -206,6 +206,16 @@ func buildForeignKeySQL(c *pgq.Constraint) string {
 			cols = append(cols, s.GetSval())
 		}
 	}
+	return buildForeignKeySQLWithCols(cols, c)
+}
+
+// buildInlineForeignKeySQL builds an FK SQL fragment for a column-level (inline) REFERENCES
+// clause where FkAttrs is empty and the referencing column is supplied via colName.
+func buildInlineForeignKeySQL(colName string, c *pgq.Constraint) string {
+	return buildForeignKeySQLWithCols([]string{colName}, c)
+}
+
+func buildForeignKeySQLWithCols(cols []string, c *pgq.Constraint) string {
 	var refCols []string
 	for _, k := range c.GetPkAttrs() {
 		if k == nil {

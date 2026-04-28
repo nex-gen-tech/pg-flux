@@ -27,11 +27,34 @@ var (
 	reTriggerExec = regexp.MustCompile(`(?i)EXECUTE\s+(?:FUNCTION|PROCEDURE)\s+((?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*)(?:\s*[\(;]|$)`)
 )
 
+// unquoteIdent strips double-quote delimiters from a (possibly quoted) PostgreSQL
+// identifier or schema-qualified name and lowercases the result.
+// E.g. `"My Type"` → `my type`, `"Pub"."My Type"` → `pub.my type`.
+func unquoteIdent(s string) string {
+	var b strings.Builder
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"' && inQuote && i+1 < len(s) && s[i+1] == '"':
+			// escaped double-quote inside quoted ident
+			b.WriteByte('"')
+			i++
+		case c == '"':
+			inQuote = !inQuote
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 func normalizeObjKey(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" {
 		return ""
 	}
+	s = unquoteIdent(s)
 	if !strings.Contains(s, ".") {
 		return "public." + s
 	}

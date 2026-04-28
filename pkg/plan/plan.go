@@ -24,12 +24,17 @@ const (
 	ChangeDropConstraint ChangeType = "DROP_TABLE_CONSTRAINT"
 	ChangeCreateView     ChangeType = "CREATE_VIEW"
 	ChangeDropView       ChangeType = "DROP_VIEW"
+	// ChangeDropViewEarly is a DROP VIEW emitted before ALTER COLUMN TYPE to unblock type changes.
+	// It renders identically to ChangeDropView but sorts with higher priority (before ALTER_COLUMN_TYPE).
+	ChangeDropViewEarly  ChangeType = "DROP_VIEW_EARLY"
 	ChangeCreateSequence ChangeType = "CREATE_SEQUENCE"
 	ChangeDropSequence   ChangeType = "DROP_SEQUENCE"
 	ChangeCreateTrigger  ChangeType = "CREATE_TRIGGER"
 	ChangeDropTrigger    ChangeType = "DROP_TRIGGER"
+	// ChangeCreateType covers CREATE TYPE and CREATE DOMAIN — sorted early so tables can reference the type.
+	ChangeCreateType ChangeType = "CREATE_TYPE"
 	// ChangeRawSQL is pass-through DDL (e.g. partition attach) not represented as first-class objects.
-	ChangeRawSQL          ChangeType = "RAW_DDL"
+	ChangeRawSQL ChangeType = "RAW_DDL"
 	ChangeCreateExtension ChangeType = "CREATE_EXTENSION"
 	ChangeDropExtension   ChangeType = "DROP_EXTENSION"
 	// ChangeUpdateExtension runs ALTER EXTENSION ... UPDATE TO (version pin / upgrade).
@@ -42,6 +47,7 @@ type Statement struct {
 	DDL                string
 	OpType             string
 	Object             string
+	Column             string // set for column-level operations (e.g. SET NOT NULL)
 	IsConcurrent       bool
 	LockTimeoutMS      int
 	StatementTimeoutMS int

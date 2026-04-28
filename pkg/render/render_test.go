@@ -16,6 +16,16 @@ func TestParseAllowHazards(t *testing.T) {
 	assert.True(t, m[hazard.TableLock])
 }
 
+func TestParseAllowHazards_empty(t *testing.T) {
+	require.Nil(t, ParseAllowHazards(""))
+}
+
+func TestParseAllowHazards_whitespaceOnly(t *testing.T) {
+	// "  " has no non-empty tokens after splitting, so result is an empty map (not nil)
+	m := ParseAllowHazards("  ")
+	assert.Empty(t, m)
+}
+
 func TestDriftToJSON(t *testing.T) {
 	var buf bytes.Buffer
 	err := DriftToJSON(&buf, DriftJSON{IsDrift: true, Differences: []Difference{
@@ -38,4 +48,23 @@ func TestPlanToJSON_EmitsHazards(t *testing.T) {
 	s := buf.String()
 	assert.Contains(t, s, "DATA_LOSS")
 	assert.Contains(t, s, `"hazards"`)
+}
+
+func TestPlanToJSON_nilPlan(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, PlanToJSON(&buf, nil, "", "", nil))
+	assert.Contains(t, buf.String(), "statements")
+}
+
+func TestPlanToJSON_blockingHazards(t *testing.T) {
+	p := &plan.ExecutionPlan{Statements: []plan.Statement{{
+		ID: 1, OpType: "X", DDL: "DROP TABLE t",
+		BlockingHazards: true,
+		Hazards: []hazard.Detected{{
+			Type: hazard.DataLoss, Severity: hazard.SeverityBlocking, Message: "drops data",
+		}},
+	}}}
+	var buf bytes.Buffer
+	require.NoError(t, PlanToJSON(&buf, p, "src", "live", nil))
+	assert.Contains(t, buf.String(), "has_blocking_hazards")
 }

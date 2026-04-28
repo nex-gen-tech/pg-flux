@@ -48,7 +48,7 @@ func TestDiffIndexesViewsSeqTrigFn_policies(t *testing.T) {
 		Functions: map[string]*schema.Function{},
 		Policies:  map[string]*schema.Policy{},
 	}
-	ch := diffIndexes(d, l)
+	ch := diffIndexes(d, l, nil)
 	require.NotEmpty(t, ch)
 	ch2 := diffViews(d, l)
 	require.NotEmpty(t, ch2)

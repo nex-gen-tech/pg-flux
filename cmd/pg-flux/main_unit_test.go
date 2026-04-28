@@ -80,3 +80,31 @@ func TestLoadDesired_TempDir(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, st.Tables)
 }
+
+func TestLoadConfig_missing(t *testing.T) {
+	cfg, err := loadConfig(filepath.Join(t.TempDir(), "nonexistent.yml"))
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Equal(t, "", cfg.SchemaDir)
+}
+
+func TestLoadConfig_valid(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "cfg.yml")
+	require.NoError(t, os.WriteFile(f, []byte("version: 1\nschema_dir: ./migrations\ntarget_schemas:\n  - public\n  - app\n"), 0o644))
+	cfg, err := loadConfig(f)
+	require.NoError(t, err)
+	require.Equal(t, "./migrations", cfg.SchemaDir)
+	require.Equal(t, []string{"public", "app"}, cfg.TargetSchemas)
+}
+
+func TestLoadConfig_invalid(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "bad.yml")
+	require.NoError(t, os.WriteFile(f, []byte("version: [invalid yaml\n"), 0o644))
+	_, err := loadConfig(f)
+	require.Error(t, err)
+}
+
+func TestErrDriftDetected_sentinel(t *testing.T) {
+	require.ErrorIs(t, errDriftDetected, errDriftDetected)
+	require.NotErrorIs(t, errDriftDetected, os.ErrNotExist)
+}

@@ -1,0 +1,4 @@
+version: 1
+schema_dir: /var/folders/zj/_hkkjj190qq_wfgqjbllc_2h0000gn/T/TestInitCommand2043971239/001
+migrations_dir: ./migrations
+target_schemas: [ public ]
