@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/nexg/pg-flux/pkg/shadow"
 )
 
 // ApplyOptions controls migration application.
@@ -21,6 +23,10 @@ type ApplyOptions struct {
 	TrackingSchema string
 	// DryRun prints what would be applied without executing anything.
 	DryRun bool
+	// ShadowDSN is an optional DSN for a shadow database used for pre-flight validation.
+	// When non-empty, each pending migration is validated in a rolled-back transaction on
+	// this database before being applied to the real one. Requires pkg/shadow.
+	ShadowDSN string
 	// Progress receives log lines (may be nil).
 	Progress io.Writer
 }
@@ -88,6 +94,16 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 			logf(opts.Progress, "would apply  %s\n", base)
 			res.Applied = append(res.Applied, base)
 			continue
+		}
+
+		// Pre-flight shadow validation: apply in a rolled-back transaction on the shadow DB
+		// to catch SQL syntax / semantic errors before touching the live database.
+		if opts.ShadowDSN != "" {
+			logf(opts.Progress, "shadow  %s ...\n", base)
+			if err := shadow.ValidateMigrationSQL(ctx, opts.ShadowDSN, base, content); err != nil {
+				return nil, fmt.Errorf("shadow validate %s: %w", base, err)
+			}
+			logf(opts.Progress, "        ok (shadow)\n")
 		}
 
 		logf(opts.Progress, "apply %s ...\n", base)

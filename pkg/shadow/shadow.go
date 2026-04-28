@@ -2,6 +2,7 @@
 //
 //   - ValidateSyntaxInTxn / ValidateSyntaxOnDatabase: each DDL in one transaction, then ROLLBACK (syntax only).
 //   - ValidateSemanticApply / ValidateSemanticOnDatabase: each DDL in autocommit order (mutates DB; use empty instance).
+//   - ValidateMigrationSQL: validate one migration file's SQL in a rolled-back transaction.
 //
 // Neither mode proves logical equivalence with production; semantic apply is the stronger check for ordering and catalog effects.
 package shadow
@@ -9,6 +10,7 @@ package shadow
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -55,4 +57,184 @@ func ValidateSyntaxOnDatabase(ctx context.Context, connString string, p *plan.Ex
 	}
 	defer pool.Close()
 	return ValidateSyntaxInTxn(ctx, pool, p)
+}
+
+// reTransactionControl matches standalone BEGIN / COMMIT lines that pg-flux adds to
+// migration files as human-readable markers; these must be stripped before wrapping the
+// content in our own rolled-back validation transaction.
+var reValidateTxnControl = strings.NewReplacer(
+	"BEGIN;", "",
+	"begin;", "",
+	"COMMIT;", "",
+	"commit;", "",
+)
+
+// ValidateMigrationSQL validates a single migration file's SQL by executing all
+// non-CONCURRENTLY statements inside a transaction that is always rolled back.
+// It does not mutate any live table; it only catches SQL syntax and semantic errors
+// that would be visible before data access (missing table, wrong column type, etc.).
+//
+// CONCURRENTLY statements cannot run inside a transaction; they are validated by parsing
+// alone (BEGIN; <stmt> COMMIT would also fail for them, so we skip execution entirely).
+//
+// connString should point to a disposable shadow database or the live DB. Using the live
+// DB is safe because the transaction is always rolled back, but it does take brief locks.
+func ValidateMigrationSQL(ctx context.Context, connString string, filename string, content []byte) error {
+	if connString == "" {
+		return fmt.Errorf("shadow: empty connection string")
+	}
+	pool, err := pgxpool.New(ctx, connString)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	ac, err := pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer ac.Release()
+	c := ac.Conn()
+
+	if _, err := c.Exec(ctx, "BEGIN"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = c.Exec(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	sql := reValidateTxnControl.Replace(string(content))
+	for _, stmt := range splitSQLForShadow(sql) {
+		upper := strings.ToUpper(stmt)
+		if strings.Contains(upper, "CONCURRENTLY") {
+			// Cannot run inside a transaction; skip execution (syntax was already validated
+			// by pg_query.Parse in a prior step when the migration was generated).
+			continue
+		}
+		if _, err := c.Exec(ctx, stmt); err != nil {
+			_, _ = c.Exec(context.Background(), "ROLLBACK")
+			committed = true // prevent double-rollback in defer
+			return fmt.Errorf("shadow validate %s (rolled back): %w", filename, err)
+		}
+	}
+	_, _ = c.Exec(ctx, "ROLLBACK")
+	committed = true
+	return nil
+}
+
+// splitSQLForShadow splits a SQL string at semicolons, returning non-empty statements.
+// Skips SQL comment lines and blank statements.
+func splitSQLForShadow(sql string) []string {
+	var out []string
+	for _, stmt := range strings.Split(sql, ";") {
+		s := strings.TrimSpace(stmt)
+		if s == "" {
+			continue
+		}
+		// Strip leading comment lines.
+		var lines []string
+		for _, line := range strings.Split(s, "\n") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+				lines = append(lines, line)
+			}
+		}
+		s = strings.TrimSpace(strings.Join(lines, "\n"))
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// reTransactionControl matches standalone BEGIN / COMMIT lines that pg-flux adds to
+// migration files as human-readable markers; these must be stripped before wrapping the
+// content in our own rolled-back validation transaction.
+var reValidateTxnControl = strings.NewReplacer(
+	"BEGIN;", "",
+	"begin;", "",
+	"COMMIT;", "",
+	"commit;", "",
+)
+
+// ValidateMigrationSQL validates a single migration file's SQL by executing all
+// non-CONCURRENTLY statements inside a transaction that is always rolled back.
+// It does not mutate any live table; it only catches SQL syntax and semantic errors
+// that would be visible before data access (missing table, wrong column type, etc.).
+//
+// CONCURRENTLY statements cannot run inside a transaction; they are validated by parsing
+// alone (BEGIN; <stmt> COMMIT would also fail for them, so we skip execution entirely).
+//
+// connString should point to a disposable shadow database or the live DB. Using the live
+// DB is safe because the transaction is always rolled back, but it does take brief locks.
+func ValidateMigrationSQL(ctx context.Context, connString string, filename string, content []byte) error {
+	if connString == "" {
+		return fmt.Errorf("shadow: empty connection string")
+	}
+	pool, err := pgxpool.New(ctx, connString)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	ac, err := pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer ac.Release()
+	c := ac.Conn()
+
+	if _, err := c.Exec(ctx, "BEGIN"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = c.Exec(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	sql := reValidateTxnControl.Replace(string(content))
+	for _, stmt := range splitSQLForShadow(sql) {
+		upper := strings.ToUpper(stmt)
+		if strings.Contains(upper, "CONCURRENTLY") {
+			// Cannot run inside a transaction; skip execution (syntax was already validated
+			// by pg_query.Parse in a prior step when the migration was generated).
+			continue
+		}
+		if _, err := c.Exec(ctx, stmt); err != nil {
+			_, _ = c.Exec(context.Background(), "ROLLBACK")
+			committed = true // prevent double-rollback in defer
+			return fmt.Errorf("shadow validate %s (rolled back): %w", filename, err)
+		}
+	}
+	_, _ = c.Exec(ctx, "ROLLBACK")
+	committed = true
+	return nil
+}
+
+// splitSQLForShadow splits a SQL string at semicolons, returning non-empty statements.
+// Skips SQL comment lines and blank statements.
+func splitSQLForShadow(sql string) []string {
+	var out []string
+	for _, stmt := range strings.Split(sql, ";") {
+		s := strings.TrimSpace(stmt)
+		if s == "" {
+			continue
+		}
+		// Strip leading comment lines.
+		var lines []string
+		for _, line := range strings.Split(s, "\n") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+				lines = append(lines, line)
+			}
+		}
+		s = strings.TrimSpace(strings.Join(lines, "\n"))
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

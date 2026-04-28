@@ -278,6 +278,7 @@ func cmdMigrateGenerate() *cobra.Command {
 
 func cmdMigrateApply() *cobra.Command {
 	var dry bool
+	var shadowDSNFlag string
 	c := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply pending migration files to the database",
@@ -293,6 +294,7 @@ func cmdMigrateApply() *cobra.Command {
 				MigrationsDir:  migrationsDir,
 				TrackingSchema: trackingSchema,
 				DryRun:         dry,
+				ShadowDSN:      shadowDSNFlag,
 				Progress:       cmd.OutOrStdout(),
 			})
 			if err != nil {
@@ -307,6 +309,8 @@ func cmdMigrateApply() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&dry, "dry-run", false, "show what would be applied without executing")
+	c.Flags().StringVar(&shadowDSNFlag, "shadow-dsn", os.Getenv("PGFLUX_SHADOW_DSN"),
+		"optional disposable DB DSN: validate each pending migration in a rolled-back transaction before applying to the live DB")
 	return c
 }
 
