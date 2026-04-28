@@ -27,6 +27,9 @@ import (
 	"github.com/nexg/pg-flux/pkg/src"
 )
 
+// Version is the build-time version string (set via -ldflags).
+var Version = "dev"
+
 var (
 	globalFormat     string
 	dbURL            string
@@ -49,6 +52,7 @@ var (
 // pgfluxConfig mirrors the .pg-flux.yml config file format.
 type pgfluxConfig struct {
 	Version        int      `yaml:"version"`
+	DatabaseURL    string   `yaml:"db"`
 	SchemaDir      string   `yaml:"schema_dir"`
 	TargetSchemas  []string `yaml:"target_schemas"`
 	MigrationsDir  string   `yaml:"migrations_dir"`
@@ -124,9 +128,12 @@ func newRoot() *cobra.Command {
 		if cfg.TrackingSchema != "" && !pf.Changed("tracking-schema") {
 			trackingSchema = cfg.TrackingSchema
 		}
+		if cfg.DatabaseURL != "" && !pf.Changed("db") {
+			dbURL = cfg.DatabaseURL
+		}
 		return nil
 	}
-	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate())
+	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdVersion())
 	return r
 }
 
@@ -235,12 +242,23 @@ func cmdMigrate() *cobra.Command {
 		Use:   "migrate",
 		Short: "Manage timestamped migration files",
 	}
-	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus())
+	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus(), cmdMigrateRepair(), cmdMigrateBaseline())
 	return m
+}
+
+func cmdVersion() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print pg-flux version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintf(cmd.OutOrStdout(), "pg-flux %s\n", Version)
+		},
+	}
 }
 
 func cmdMigrateGenerate() *cobra.Command {
 	var label string
+	var generateUndo bool
 	c := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate a new migration file from schema diff",
@@ -269,10 +287,18 @@ func cmdMigrateGenerate() *cobra.Command {
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Generated: %s (%d statements)\n", res.Filename, len(res.Statements))
+			if generateUndo {
+				undoFile, err := migrate.WriteUndoFile(res)
+				if err != nil {
+					return fmt.Errorf("write undo file: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Undo:      %s\n", undoFile)
+			}
 			return nil
 		},
 	}
 	c.Flags().StringVar(&label, "label", "", "short description appended to the filename")
+	c.Flags().BoolVar(&generateUndo, "generate-undo", false, "also write a best-effort undo/rollback .sql file alongside the migration")
 	return c
 }
 
@@ -351,6 +377,86 @@ func cmdMigrateStatus() *cobra.Command {
 			return w.Flush()
 		},
 	}
+}
+
+func cmdMigrateRepair() *cobra.Command {
+	var file string
+	c := &cobra.Command{
+		Use:   "repair",
+		Short: "Update stored checksum for a migration file that was edited after apply",
+		Long: `Repair re-hashes the current on-disk content of a migration file and updates
+the checksum stored in the tracking table. Use this only when you have deliberately
+edited an already-applied migration and accept that the recorded history no longer
+matches the original content.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			repaired, err := migrate.Repair(ctx, pool, migrate.RepairOptions{
+				MigrationsDir:  migrationsDir,
+				TrackingSchema: trackingSchema,
+				Filename:       file,
+			})
+			if err != nil {
+				return err
+			}
+			if len(repaired) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No checksum mismatches found — nothing to repair.")
+				return nil
+			}
+			for _, f := range repaired {
+				fmt.Fprintf(cmd.OutOrStdout(), "repaired  %s\n", f)
+			}
+			return nil
+		},
+	}
+	c.Flags().StringVar(&file, "file", "", "repair only this specific filename (default: all mismatches)")
+	return c
+}
+
+func cmdMigrateBaseline() *cobra.Command {
+	var upTo string
+	c := &cobra.Command{
+		Use:   "baseline",
+		Short: "Mark existing migration files as applied without executing them",
+		Long: `Baseline is used when onboarding an existing database that was set up
+manually or by another tool. It marks migration files as applied in the tracking
+table so pg-flux does not attempt to re-run them.
+
+Use --up-to to baseline only migrations up to (and including) a specific filename.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			baselined, err := migrate.Baseline(ctx, pool, migrate.BaselineOptions{
+				MigrationsDir:  migrationsDir,
+				TrackingSchema: trackingSchema,
+				UpTo:           upTo,
+			})
+			if err != nil {
+				return err
+			}
+			if len(baselined) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No pending migrations to baseline.")
+				return nil
+			}
+			for _, f := range baselined {
+				fmt.Fprintf(cmd.OutOrStdout(), "baselined  %s\n", f)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "\nBaselined %d migration(s).\n", len(baselined))
+			return nil
+		},
+	}
+	c.Flags().StringVar(&upTo, "up-to", "", "baseline only files up to and including this filename")
+	return c
 }
 
 func cmdPlan() *cobra.Command {

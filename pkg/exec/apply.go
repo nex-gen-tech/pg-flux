@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,11 +42,9 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, p *plan.ExecutionPlan, o Opt
 	if o.StatementTimeout != "" && !validTimeout.MatchString(o.StatementTimeout) {
 		return fmt.Errorf("invalid statement_timeout value %q: only digits, letters, and spaces are allowed", o.StatementTimeout)
 	}
-	connString := os.Getenv("DATABASE_URL")
-	if connString == "" {
-		connString = "default"
-	}
-	h := sha256.Sum256([]byte(connString))
+	cfg := pool.Config()
+	lockKey := fmt.Sprintf("%s:%d/%s", cfg.ConnConfig.Host, cfg.ConnConfig.Port, cfg.ConnConfig.Database)
+	h := sha256.Sum256([]byte(lockKey))
 	lockID := int64(binary.BigEndian.Uint64(h[:8]))
 
 	ac, err := pool.Acquire(ctx)

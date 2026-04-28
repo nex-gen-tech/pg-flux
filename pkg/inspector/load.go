@@ -19,6 +19,9 @@ type Options struct {
 
 // Inspect loads user tables, indexes, functions, and RLS policies from system catalogs in parallel.
 func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.SchemaState, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("inspector: nil pool")
+	}
 	schemas := opt.Schemas
 	if len(schemas) == 0 {
 		schemas = []string{"public"}

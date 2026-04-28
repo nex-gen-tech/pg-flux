@@ -50,7 +50,9 @@ Hint comments are SQL line comments (`-- @key value`) placed **directly above** 
 
 ### `-- @renamed from=<old_name>`
 
-Tells pg-flux that a column or table was renamed. Without this hint, a rename looks like DROP + ADD, which loses data.
+Tells pg-flux that a column **or table** was renamed. Without this hint, a rename looks like DROP + ADD (or DROP TABLE + CREATE TABLE), which loses all data.
+
+**Column rename:**
 
 ```sql
 CREATE TABLE public.users (
@@ -69,10 +71,28 @@ ALTER TABLE public.users RENAME COLUMN username TO handle;
 ALTER TABLE public.users RENAME COLUMN nickname TO screen_name;
 ```
 
+**Table rename:**
+
+Place the annotation on the line immediately before `CREATE TABLE`:
+
+```sql
+-- @renamed from=accounts
+CREATE TABLE public.users (
+  id    bigserial PRIMARY KEY,
+  email text NOT NULL
+);
+```
+
+Generated migration:
+
+```sql
+ALTER TABLE public.accounts RENAME TO users;
+```
+
 **Rules:**
-- Place the `-- @renamed` comment on the line immediately before the column definition.
-- The `from=` value is the live database column name, not a historical one.
-- Remove the annotation after the migration has been applied (it has no effect once the column is renamed).
+- Place the `-- @renamed` comment on the line immediately before the column or CREATE TABLE definition.
+- The `from=` value is the current live database name, not a historical one.
+- Remove the annotation after the migration has been applied (it has no effect once renamed).
 
 ---
 
