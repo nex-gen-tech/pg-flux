@@ -17,7 +17,10 @@ func fillColumns(ctx context.Context, pool *pgxpool.Pool, tableOID uint32, t *sc
 			a.attnotnull,
 			coalesce(pg_get_expr(ad.adbin, ad.adrelid), '') AS def,
 			a.attgenerated::text,
-			a.attidentity::text
+			a.attidentity::text,
+			a.attstorage::text,
+			COALESCE(a.attcompression::text, '') AS attcompression,
+			COALESCE((SELECT collname FROM pg_collation co WHERE co.oid = a.attcollation), '') AS attcollname
 		FROM pg_attribute a
 		LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
 		WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped
@@ -28,15 +31,36 @@ func fillColumns(ctx context.Context, pool *pgxpool.Pool, tableOID uint32, t *sc
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var name, typ, def, attgenerated, attidentity string
+		var name, typ, def, attgenerated, attidentity, attstorage, attcompression, attcollname string
 		var notnull bool
-		if err := rows.Scan(&name, &typ, &notnull, &def, &attgenerated, &attidentity); err != nil {
+		if err := rows.Scan(&name, &typ, &notnull, &def, &attgenerated, &attidentity, &attstorage, &attcompression, &attcollname); err != nil {
 			return err
 		}
 		c := &schema.Column{
 			Name:    strings.ToLower(name),
 			TypeSQL: typ,
 			NotNull: notnull,
+		}
+		switch attstorage {
+		case "p":
+			c.Storage = "PLAIN"
+		case "e":
+			c.Storage = "EXTERNAL"
+		case "m":
+			c.Storage = "MAIN"
+		case "x":
+			c.Storage = "EXTENDED"
+		}
+		switch attcompression {
+		case "l":
+			c.Compression = "lz4"
+		case "p":
+			c.Compression = "pglz"
+		}
+		// Only record collation when it differs from "default" (which means use the
+		// column type's default collation).
+		if attcollname != "" && attcollname != "default" {
+			c.Collation = strings.ToLower(attcollname)
 		}
 		switch attgenerated {
 		case "s":

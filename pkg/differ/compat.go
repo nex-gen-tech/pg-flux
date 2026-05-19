@@ -1,6 +1,8 @@
 package differ
 
 import (
+	"strings"
+
 	"github.com/nexg/pg-flux/pkg/pgver"
 	"github.com/nexg/pg-flux/pkg/schema"
 )
@@ -26,6 +28,7 @@ func checkServerCompat(desired *schema.SchemaState, srv pgver.Version) error {
 		{pgver.FeatureVirtualGenerated, hasVirtualGeneratedColumn},
 		{pgver.FeatureNotEnforced, hasNotEnforcedConstraint},
 		{pgver.FeatureNullsNotDistinct, hasNullsNotDistinctUnique},
+		{pgver.FeatureLZ4Compression, hasLZ4CompressionColumn},
 	}
 	for _, c := range checks {
 		if c.inUse != nil && c.inUse(desired) {
@@ -69,6 +72,23 @@ func hasNotEnforcedConstraint(s *schema.SchemaState) bool {
 		}
 		for _, fk := range t.ForeignKeys {
 			if fk != nil && fk.NotEnforced {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasLZ4CompressionColumn(s *schema.SchemaState) bool {
+	if s == nil {
+		return false
+	}
+	for _, t := range s.Tables {
+		if t == nil {
+			continue
+		}
+		for _, c := range t.Columns {
+			if c != nil && strings.EqualFold(c.Compression, "lz4") {
 				return true
 			}
 		}
