@@ -81,6 +81,18 @@ type Trigger struct {
 	Comment                     string
 }
 
+// EventTrigger is a database-wide DDL/login event trigger (pg_event_trigger).
+// Tags is the optional WHEN tag IN (...) filter; empty means fire on all matching events.
+type EventTrigger struct {
+	Name     string
+	Event    string   // ddl_command_start, ddl_command_end, sql_drop, table_rewrite, login (PG17+), reindex (PG17+)
+	Function string   // schema.name() — fully qualified
+	Tags     []string // command tags from WHEN tag IN ('CREATE TABLE', ...)
+	Enabled  string   // "" / "REPLICA" / "ALWAYS" / "DISABLE" — pg_trigger.tgenabled-style
+	Comment  string
+	Owner    string
+}
+
 // ConstraintKey names a constraint within a table: schema.relation/constraint
 func ConstraintKey(sch, tbl, conName string) string {
 	if sch == "" {

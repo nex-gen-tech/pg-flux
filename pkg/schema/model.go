@@ -47,6 +47,8 @@ type SchemaState struct {
 	// DefaultPrivileges captures ALTER DEFAULT PRIVILEGES state (from pg_default_acl
 	// or from source-file ALTER DEFAULT PRIVILEGES statements).
 	DefaultPrivileges []*DefaultPrivilege
+	// EventTriggers (pg_event_trigger). Database-wide DDL/login triggers.
+	EventTriggers map[string]*EventTrigger
 }
 
 // RLSFlags carries pending RLS enable/force flags for a table.

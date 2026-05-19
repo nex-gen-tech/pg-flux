@@ -183,6 +183,10 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	if err := loadDefaultPrivileges(ctx, pool, st, schemas); err != nil {
 		return nil, err
 	}
+	// Event triggers (database-wide, not schema-scoped).
+	if err := loadEventTriggers(ctx, pool, st); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 

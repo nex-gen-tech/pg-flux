@@ -82,6 +82,9 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 	// ALTER DEFAULT PRIVILEGES — track on SchemaState.DefaultPrivileges.
 	case *pgq.Node_AlterDefaultPrivilegesStmt:
 		return captureAlterDefaultPrivileges(n.AlterDefaultPrivilegesStmt, st)
+	// CREATE EVENT TRIGGER — database-wide DDL trigger.
+	case *pgq.Node_CreateEventTrigStmt:
+		return captureCreateEventTrigger(n.CreateEventTrigStmt, st)
 	default:
 		return nil
 	}
