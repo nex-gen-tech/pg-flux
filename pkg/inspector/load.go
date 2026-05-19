@@ -182,7 +182,9 @@ func loadTablesMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 	out := make(map[string]*schema.Table)
 	rows, err := pool.Query(ctx, `
 		SELECT c.oid, n.nspname, c.relname, c.relrowsecurity, c.relforcerowsecurity,
-		       c.relkind::text
+		       c.relkind::text,
+		       c.relpersistence::text,
+		       COALESCE(c.reloptions, ARRAY[]::text[]) AS reloptions
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE c.relkind IN ('r', 'p') AND n.nspname = ANY($1)
@@ -197,8 +199,9 @@ func loadTablesMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 		var oid uint32
 		var nsp, rel string
 		var rls, rlsf bool
-		var relkind string
-		if err := rows.Scan(&oid, &nsp, &rel, &rls, &rlsf, &relkind); err != nil {
+		var relkind, persistence string
+		var reloptions []string
+		if err := rows.Scan(&oid, &nsp, &rel, &rls, &rlsf, &relkind, &persistence, &reloptions); err != nil {
 			return nil, err
 		}
 		key := schema.TableKey(nsp, rel)
@@ -207,6 +210,8 @@ func loadTablesMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 			Name:       strings.ToLower(rel),
 			RLSEnabled: rls,
 			RLSForced:  rlsf,
+			Unlogged:   persistence == "u",
+			ReLOptions: reloptions,
 		}
 		// For partitioned tables (relkind='p'), load the partition key definition.
 		if relkind == "p" {

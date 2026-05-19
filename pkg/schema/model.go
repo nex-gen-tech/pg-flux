@@ -85,6 +85,13 @@ type Table struct {
 	// PartitionBy holds the partition strategy and key (e.g. "RANGE (ts)") for
 	// partitioned tables. Empty for regular tables.
 	PartitionBy string
+	// Unlogged is true when the table is UNLOGGED (pg_class.relpersistence='u').
+	// UNLOGGED tables skip WAL — faster writes, lost on crash. Common for caches.
+	Unlogged bool
+	// ReLOptions are the table's WITH (...) storage parameters (pg_class.reloptions
+	// parsed into a sorted "key=value" slice). Examples: "fillfactor=70",
+	// "autovacuum_vacuum_scale_factor=0.1".
+	ReLOptions []string
 	// Table-level CHECK / UNIQUE / EXCLUDE / FK
 	Checks      []*TableCheck
 	Uniques     []*TableUnique

@@ -57,6 +57,12 @@ type Sequence struct {
 	Schema, Name, DefSQL string
 	Comment              string
 	Owner                string
+	// OwnedBy is the "schema.table.column" the sequence is owned by, or empty.
+	// From pg_depend with deptype='a' (auto) joining pg_class+pg_attribute.
+	OwnedBy string
+	// AsType is the sequence's value type: "smallint", "integer", or "bigint".
+	// From pg_sequence.seqtypid → format_type. Defaults to "bigint" when not specified.
+	AsType string
 }
 
 // Trigger is a non-internal trigger.

@@ -171,12 +171,23 @@ func loadSequenceMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 			n.nspname,
 			c.relname,
 			'CREATE SEQUENCE ' || format('%I.%I', n.nspname, c.relname) ||
+			' AS ' || format_type(s.seqtypid, NULL) ||
 			' INCREMENT BY ' || s.seqincrement ||
 			' MINVALUE ' || s.seqmin ||
 			' MAXVALUE ' || s.seqmax ||
 			' START WITH ' || s.seqstart ||
 			' CACHE ' || s.seqcache ||
-			CASE WHEN s.seqcycle THEN ' CYCLE' ELSE ' NO CYCLE' END AS def
+			CASE WHEN s.seqcycle THEN ' CYCLE' ELSE ' NO CYCLE' END AS def,
+			format_type(s.seqtypid, NULL) AS as_type,
+			COALESCE((
+				SELECT format('%I.%I.%I', on_n.nspname, on_c.relname, a.attname)
+				FROM pg_depend d
+				JOIN pg_class on_c     ON on_c.oid = d.refobjid
+				JOIN pg_namespace on_n ON on_n.oid = on_c.relnamespace
+				JOIN pg_attribute a    ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+				WHERE d.objid = c.oid AND d.deptype = 'a' AND d.classid = 'pg_class'::regclass
+				LIMIT 1
+			), '') AS owned_by
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		JOIN pg_sequence s ON s.seqrelid = c.oid
@@ -195,14 +206,14 @@ func loadSequenceMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 	defer rows.Close()
 	out := make(map[string]*schema.Sequence)
 	for rows.Next() {
-		var nsp, sname, def string
-		if err := rows.Scan(&nsp, &sname, &def); err != nil {
+		var nsp, sname, def, asType, ownedBy string
+		if err := rows.Scan(&nsp, &sname, &def, &asType, &ownedBy); err != nil {
 			return nil, err
 		}
 		nsp = strings.ToLower(nsp)
 		sname = strings.ToLower(sname)
 		k := schema.SeqKey(nsp, sname)
-		out[k] = &schema.Sequence{Schema: nsp, Name: sname, DefSQL: def}
+		out[k] = &schema.Sequence{Schema: nsp, Name: sname, DefSQL: def, AsType: asType, OwnedBy: ownedBy}
 	}
 	return out, rows.Err()
 }
