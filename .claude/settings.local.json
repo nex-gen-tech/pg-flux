@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(PGPASSWORD=erestro psql -h localhost -p 5433 -U erestro -d postgres -c \"DROP DATABASE IF EXISTS pgflux_v2_test;\")",
+      "Bash(PGPASSWORD=erestro psql -h localhost -p 5433 -U erestro -d postgres -c \"CREATE DATABASE pgflux_v2_test;\")",
+      "Bash(mkdir -p /tmp/v2_mig)",
+      "Bash(rm -f /tmp/v2_mig/*)",
+      "Bash(/Users/ramanandakairi/nexg/pg-flux/pg-flux migrate *)"
+    ]
+  }
+}

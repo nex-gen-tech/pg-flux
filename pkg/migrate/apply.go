@@ -205,14 +205,21 @@ var reTransactionControl = regexp.MustCompile(`(?i)^\s*(begin|commit)\s*$`)
 func applyOne(ctx context.Context, pool *pgxpool.Pool, trackingSchema, base string, content []byte, chk string) error {
 	stmts := splitSQLStatements(string(content))
 
+	// The migration file is laid out as:
+	//   BEGIN; <regular DDL>; COMMIT; <CONCURRENTLY statements + their dependents>
+	// Any statement appearing AFTER the closing COMMIT marker must run outside the
+	// main transaction even if it doesn't contain CONCURRENTLY itself — this matters
+	// for `COMMENT ON INDEX` which has to follow `CREATE INDEX CONCURRENTLY`.
 	var regular, concurrent []string
+	pastCommit := false
 	for _, s := range stmts {
-		// BEGIN / COMMIT in the file are documentation markers; applyOne manages
-		// the transaction itself so these must be stripped to avoid double-begin.
 		if reTransactionControl.MatchString(s) {
+			if strings.EqualFold(strings.TrimSpace(s), "COMMIT") {
+				pastCommit = true
+			}
 			continue
 		}
-		if isConcurrent(s) {
+		if pastCommit || isConcurrent(s) {
 			concurrent = append(concurrent, s)
 		} else {
 			regular = append(regular, s)

@@ -58,9 +58,9 @@ func fillColumns(ctx context.Context, pool *pgxpool.Pool, tableOID uint32, t *sc
 			c.Compression = "pglz"
 		}
 		// Only record collation when it differs from "default" (which means use the
-		// column type's default collation).
+		// column type's default collation). Preserve case — "C" and "c" are distinct.
 		if attcollname != "" && attcollname != "default" {
-			c.Collation = strings.ToLower(attcollname)
+			c.Collation = attcollname
 		}
 		switch attgenerated {
 		case "s":

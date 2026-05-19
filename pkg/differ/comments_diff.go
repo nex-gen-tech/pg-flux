@@ -99,7 +99,9 @@ func diffComments(d, l *schema.SchemaState) []change {
 			))
 		}
 	}
-	// Indexes
+	// Indexes — COMMENT ON INDEX must run AFTER the index exists. Indexes are
+	// created CONCURRENTLY (outside the main transaction), so we mark these as
+	// rawConcurrent so they land in the post-COMMIT section.
 	for k, di := range d.Indexes {
 		if di == nil {
 			continue
@@ -113,10 +115,12 @@ func diffComments(d, l *schema.SchemaState) []change {
 			lDesc = li.Comment
 		}
 		if normComment(dDesc) != normComment(lDesc) {
-			out = append(out, commentChange(
+			c := commentChange(
 				fmt.Sprintf("COMMENT ON INDEX %s.%s IS %s", ident(di.Schema), ident(di.Name), commentLiteral(di.Comment)),
 				schema.IndexKey(di.Schema, di.Name),
-			))
+			)
+			c.rawConcurrent = true
+			out = append(out, c)
 		}
 	}
 	// Functions: identity already encodes schema/name/args

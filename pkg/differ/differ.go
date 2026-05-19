@@ -222,7 +222,10 @@ type change struct {
 	trig                     *schema.Trigger
 	trigKey                  string
 	// pass-through DDL (partition attach, etc.)
-	rawSQL     string
+	rawSQL string
+	// rawConcurrent marks a RAW_DDL as needing to run outside the main txn (e.g. COMMENT
+	// ON INDEX, which has to follow CREATE INDEX CONCURRENTLY in the post-COMMIT section).
+	rawConcurrent bool
 	ext        *schema.Extension
 	dropExt    string
 	extLiveVer string
@@ -766,8 +769,11 @@ func stmtFor(c change, opt Options) []plan.Statement {
 			}
 		}
 		return []plan.Statement{{
-			OpType: string(c.kind), DDL: c.rawSQL, Object: "raw",
-			Hazards: hazards,
+			OpType:       string(c.kind),
+			DDL:          c.rawSQL,
+			Object:       "raw",
+			IsConcurrent: c.rawConcurrent,
+			Hazards:      hazards,
 		}}
 	case plan.ChangeCreateTrigger:
 		if c.trig == nil {
@@ -904,7 +910,11 @@ func createTableSQL(t *schema.Table) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS %s.%s (\n", ident(t.Schema), ident(t.Name))
+	if t.Unlogged {
+		fmt.Fprintf(&b, "CREATE UNLOGGED TABLE IF NOT EXISTS %s.%s (\n", ident(t.Schema), ident(t.Name))
+	} else {
+		fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS %s.%s (\n", ident(t.Schema), ident(t.Name))
+	}
 	for i, c := range t.Columns {
 		if c == nil {
 			continue
@@ -913,6 +923,15 @@ func createTableSQL(t *schema.Table) string {
 			b.WriteString(",\n")
 		}
 		fmt.Fprintf(&b, "  %s %s", ident(c.Name), c.TypeSQL)
+		if c.Collation != "" {
+			fmt.Fprintf(&b, " COLLATE %s", ident(c.Collation))
+		}
+		if c.Storage != "" {
+			fmt.Fprintf(&b, " STORAGE %s", strings.ToUpper(c.Storage))
+		}
+		if c.Compression != "" {
+			fmt.Fprintf(&b, " COMPRESSION %s", c.Compression)
+		}
 		if c.GeneratedExpr != "" {
 			kind := "STORED"
 			if c.GeneratedKind == "virtual" {
@@ -967,6 +986,9 @@ func createTableSQL(t *schema.Table) string {
 		fmt.Fprintf(&b, ",\n  PRIMARY KEY (%s)", strings.Join(cols, ", "))
 	}
 	b.WriteString("\n)")
+	if len(t.ReLOptions) > 0 {
+		fmt.Fprintf(&b, " WITH (%s)", strings.Join(t.ReLOptions, ", "))
+	}
 	if t.PartitionBy != "" {
 		fmt.Fprintf(&b, " PARTITION BY %s", t.PartitionBy)
 	}

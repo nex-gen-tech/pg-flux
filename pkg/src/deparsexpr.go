@@ -39,28 +39,42 @@ func constraintToTableSQL(c *pgq.Constraint) (name string, sql string, err error
 		return "", "", nil
 	}
 	name = strings.ToLower(strings.TrimSpace(c.GetConname()))
+	var body string
 	switch c.GetContype() {
 	case pgq.ConstrType_CONSTR_CHECK:
 		expr, e := deparseExprToSQL(c.GetRawExpr())
 		if e != nil {
 			if c.GetCookedExpr() != "" {
-				return name, "CHECK (" + c.GetCookedExpr() + ")", nil
+				body = "CHECK (" + c.GetCookedExpr() + ")"
+				break
 			}
 			return name, "", e
 		}
 		if expr == "" && c.GetCookedExpr() != "" {
 			expr = c.GetCookedExpr()
 		}
-		return name, "CHECK (" + strings.TrimSpace(expr) + ")", nil
+		body = "CHECK (" + strings.TrimSpace(expr) + ")"
 	case pgq.ConstrType_CONSTR_FOREIGN:
-		return name, buildForeignKeySQL(c), nil
+		body = buildForeignKeySQL(c)
 	case pgq.ConstrType_CONSTR_UNIQUE:
-		return name, buildUniqueSQL(c), nil
+		body = buildUniqueSQL(c)
 	case pgq.ConstrType_CONSTR_EXCLUSION:
-		return name, buildExclusionSQL(c), nil
+		body = buildExclusionSQL(c)
 	default:
 		return name, "", fmt.Errorf("unsupported table constraint type %v", c.GetContype())
 	}
+	// Append DEFERRABLE / INITIALLY DEFERRED / NOT ENFORCED trailers when set.
+	// FK build already appends DEFERRABLE itself (it sits between MATCH and ON-actions);
+	// for CHECK / UNIQUE / EXCLUDE we add it here.
+	if c.GetContype() != pgq.ConstrType_CONSTR_FOREIGN {
+		if c.GetDeferrable() {
+			body += " DEFERRABLE"
+			if c.GetInitdeferred() {
+				body += " INITIALLY DEFERRED"
+			}
+		}
+	}
+	return name, body, nil
 }
 
 func buildUniqueSQL(c *pgq.Constraint) string {
@@ -263,6 +277,20 @@ func buildForeignKeySQLWithCols(cols []string, c *pgq.Constraint) string {
 	if a := c.GetFkDelAction(); a != "" {
 		if d := mapFKAction(a); d != "" {
 			b.WriteString(" ON DELETE " + d)
+		}
+	}
+	// FK MATCH (FULL, PARTIAL — SIMPLE is the default and we omit).
+	switch strings.ToLower(c.GetFkMatchtype()) {
+	case "f":
+		b.WriteString(" MATCH FULL")
+	case "p":
+		b.WriteString(" MATCH PARTIAL")
+	}
+	// DEFERRABLE / NOT DEFERRABLE — only emit when explicitly set (deferrable=true).
+	if c.GetDeferrable() {
+		b.WriteString(" DEFERRABLE")
+		if c.GetInitdeferred() {
+			b.WriteString(" INITIALLY DEFERRED")
 		}
 	}
 	return b.String()

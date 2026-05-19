@@ -169,6 +169,44 @@ func processRawStmt(raw *pgq.RawStmt, content string, lines []string, st *schema
 	}
 }
 
+// defElemValueToString unwraps a DefElem argument node into a SQL-rendered text value.
+// Used for WITH (key = value, ...) options on CREATE TABLE / CREATE VIEW etc. The grammar
+// allows strings, integers, floats, booleans, type names, and lists of nodes.
+func defElemValueToString(n *pgq.Node) string {
+	if n == nil {
+		return ""
+	}
+	if s := n.GetString_(); s != nil {
+		return s.GetSval()
+	}
+	if i := n.GetInteger(); i != nil {
+		return fmt.Sprintf("%d", i.GetIval())
+	}
+	if f := n.GetFloat(); f != nil {
+		return f.GetFval()
+	}
+	if b := n.GetBoolean(); b != nil {
+		if b.GetBoolval() {
+			return "true"
+		}
+		return "false"
+	}
+	if tn := n.GetTypeName(); tn != nil {
+		s, _ := typeNameToSQL(tn)
+		return s
+	}
+	if lst := n.GetList(); lst != nil {
+		parts := make([]string, 0, len(lst.GetItems()))
+		for _, it := range lst.GetItems() {
+			if v := defElemValueToString(it); v != "" {
+				parts = append(parts, v)
+			}
+		}
+		return strings.Join(parts, ", ")
+	}
+	return ""
+}
+
 func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines []string, st *schema.SchemaState) error {
 	if cs == nil || cs.GetRelation() == nil {
 		return nil
@@ -196,6 +234,22 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 	t := &schema.Table{
 		Schema: schemaName,
 		Name:   tableName,
+	}
+	// Persistence: 'u' = UNLOGGED, 't' = TEMPORARY, 'p' = PERMANENT (default).
+	if rv.GetRelpersistence() == "u" {
+		t.Unlogged = true
+	}
+	// WITH (key = val, ...) reloptions: each is a DefElem; render as "key=val".
+	for _, opt := range cs.GetOptions() {
+		el := opt.GetDefElem()
+		if el == nil {
+			continue
+		}
+		val := defElemValueToString(el.GetArg())
+		if val == "" {
+			continue
+		}
+		t.ReLOptions = append(t.ReLOptions, el.GetDefname()+"="+val)
 	}
 	// raw.GetStmtLocation() returns 0 for the first statement in a file even when
 	// the CREATE TABLE keyword appears after leading comments (a pg_query quirk).
@@ -235,6 +289,45 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 					return err
 				}
 				col.DefaultSQL = strings.TrimSpace(ds)
+			}
+			// COLLATE clause on the column. Collation names are case-sensitive
+			// in pg_collation ("C" and "c" are distinct), so we preserve case.
+			if cc := cd.GetCollClause(); cc != nil {
+				parts := cc.GetCollname()
+				if len(parts) > 0 {
+					last := parts[len(parts)-1].GetString_()
+					if last != nil {
+						col.Collation = last.GetSval()
+					}
+				}
+			}
+			// STORAGE — two encodings depending on source form:
+			//   - ColumnDef.Storage  : one-char code matching pg_attribute.attstorage ('p','e','m','x')
+			//   - ColumnDef.StorageName: PG16+ keyword form from `STORAGE <name>` clause in CREATE TABLE
+			switch strings.ToLower(cd.GetStorageName()) {
+			case "plain":
+				col.Storage = "PLAIN"
+			case "external":
+				col.Storage = "EXTERNAL"
+			case "main":
+				col.Storage = "MAIN"
+			case "extended":
+				col.Storage = "EXTENDED"
+			default:
+				switch cd.GetStorage() {
+				case "p":
+					col.Storage = "PLAIN"
+				case "e":
+					col.Storage = "EXTERNAL"
+				case "m":
+					col.Storage = "MAIN"
+				case "x":
+					col.Storage = "EXTENDED"
+				}
+			}
+			// COMPRESSION (PG14+): ColumnDef.compression is a free-form text.
+			if comp := strings.ToLower(cd.GetCompression()); comp != "" {
+				col.Compression = comp
 			}
 			loc := int(cd.GetLocation())
 			cline := lineIndex0ForByte(content, loc)
@@ -315,11 +408,32 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 				}
 				switch cst.GetContype() {
 				case pgq.ConstrType_CONSTR_CHECK:
-					t.Checks = append(t.Checks, &schema.TableCheck{Name: cn, DefSQL: def})
+					t.Checks = append(t.Checks, &schema.TableCheck{
+						Name: cn, DefSQL: def,
+						Deferrable:        cst.GetDeferrable(),
+						InitiallyDeferred: cst.GetInitdeferred(),
+					})
 				case pgq.ConstrType_CONSTR_FOREIGN:
-					t.ForeignKeys = append(t.ForeignKeys, &schema.TableForeignKey{Name: cn, DefSQL: def})
+					match := ""
+					switch strings.ToLower(cst.GetFkMatchtype()) {
+					case "f":
+						match = "FULL"
+					case "p":
+						match = "PARTIAL"
+					}
+					t.ForeignKeys = append(t.ForeignKeys, &schema.TableForeignKey{
+						Name: cn, DefSQL: def,
+						Deferrable:        cst.GetDeferrable(),
+						InitiallyDeferred: cst.GetInitdeferred(),
+						MatchType:         match,
+					})
 				case pgq.ConstrType_CONSTR_UNIQUE:
-					t.Uniques = append(t.Uniques, &schema.TableUnique{Name: cn, DefSQL: def})
+					t.Uniques = append(t.Uniques, &schema.TableUnique{
+						Name: cn, DefSQL: def,
+						Deferrable:        cst.GetDeferrable(),
+						InitiallyDeferred: cst.GetInitdeferred(),
+						NullsNotDistinct:  cst.GetNullsNotDistinct(),
+					})
 				case pgq.ConstrType_CONSTR_EXCLUSION:
 					t.Excludes = append(t.Excludes, &schema.TableExclusion{Name: cn, DefSQL: def})
 				}
