@@ -60,6 +60,22 @@ type SchemaState struct {
 	ForeignTables  map[string]*ForeignTable
 	Publications   map[string]*Publication
 	Subscriptions  map[string]*Subscription
+	// Rare object kinds. Tracked for inspection completeness; CREATE flows via
+	// passthrough (ExtraDDL); first-class diff is not implemented for these
+	// because they rarely change and PG has very limited / no ALTER for most.
+	Operators        map[string]*OperatorInfo
+	OperatorClasses  map[string]*OperatorClassInfo
+	OperatorFamilies map[string]*OperatorFamilyInfo
+	TSConfigurations map[string]*TSConfigInfo
+	TSDictionaries   map[string]*TSDictInfo
+	TSParsers        map[string]*TSParserInfo
+	TSTemplates      map[string]*TSTemplateInfo
+	Casts            map[string]*CastInfo
+	Conversions      map[string]*ConversionInfo
+	Transforms       map[string]*TransformInfo
+	Languages        map[string]*LanguageInfo
+	AccessMethods    map[string]*AccessMethodInfo
+	Tablespaces      map[string]*TablespaceInfo
 }
 
 // RLSFlags carries pending RLS enable/force flags for a table.

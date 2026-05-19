@@ -197,6 +197,12 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	if err := loadExoticObjects(ctx, pool, st, schemas); err != nil {
 		return nil, err
 	}
+	// Rare objects: operators, opclasses, opfamilies, text search, casts,
+	// conversions, transforms, languages, access methods, tablespaces.
+	// Inspection only — no structured ALTER diff; source CREATE flows via passthrough.
+	if err := loadRareObjects(ctx, pool, st, schemas); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 
