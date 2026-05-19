@@ -4,26 +4,38 @@ import "strings"
 
 // TableCheck is a table-level CHECK (from CREATE TABLE or pg_constraint contype c).
 type TableCheck struct {
-	Name   string
-	DefSQL string // "CHECK (expr)" style fragment comparable to pg_get_constraintdef
+	Name              string
+	DefSQL            string // "CHECK (expr)" style fragment comparable to pg_get_constraintdef
+	Deferrable        bool
+	InitiallyDeferred bool
 }
 
 // TableForeignKey is a table-level foreign key (contype f in pg_constraint).
 type TableForeignKey struct {
-	Name   string
-	DefSQL string // "FOREIGN KEY ..." fragment comparable to pg_get_constraintdef
+	Name              string
+	DefSQL            string // "FOREIGN KEY ..." fragment comparable to pg_get_constraintdef
+	Deferrable        bool
+	InitiallyDeferred bool
+	// MatchType is "" (default SIMPLE), "FULL", or "PARTIAL". From pg_constraint.confmatchtype.
+	MatchType string
 }
 
 // TableUnique is a named UNIQUE table constraint (contype u; may include NULLS NOT DISTINCT).
 type TableUnique struct {
-	Name   string
-	DefSQL string
+	Name              string
+	DefSQL            string
+	Deferrable        bool
+	InitiallyDeferred bool
+	// NullsNotDistinct: PG15+ NULLS NOT DISTINCT clause on UNIQUE constraints.
+	NullsNotDistinct bool
 }
 
 // TableExclusion is a named EXCLUDE constraint (contype x).
 type TableExclusion struct {
-	Name   string
-	DefSQL string
+	Name              string
+	DefSQL            string
+	Deferrable        bool
+	InitiallyDeferred bool
 }
 
 // View is a regular or materialized view.

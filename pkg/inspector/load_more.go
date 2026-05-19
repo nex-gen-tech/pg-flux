@@ -79,7 +79,10 @@ func mergeTableConstraints(ctx context.Context, pool *pgxpool.Pool, st *schema.S
 			r.relname,
 			lower(c.conname),
 			c.contype::text,
-			pg_get_constraintdef(c.oid, true) AS def
+			pg_get_constraintdef(c.oid, true) AS def,
+			c.condeferrable,
+			c.condeferred,
+			c.confmatchtype::text
 		FROM pg_constraint c
 		JOIN pg_class r ON r.oid = c.conrelid
 		JOIN pg_namespace tn ON tn.oid = r.relnamespace
@@ -90,8 +93,9 @@ func mergeTableConstraints(ctx context.Context, pool *pgxpool.Pool, st *schema.S
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var nsp, rel, cname, ctype, def string
-		if err := rows.Scan(&nsp, &rel, &cname, &ctype, &def); err != nil {
+		var nsp, rel, cname, ctype, def, matchType string
+		var deferrable, deferred bool
+		if err := rows.Scan(&nsp, &rel, &cname, &ctype, &def, &deferrable, &deferred, &matchType); err != nil {
 			return err
 		}
 		tk := schema.TableKey(nsp, rel)
@@ -101,13 +105,21 @@ func mergeTableConstraints(ctx context.Context, pool *pgxpool.Pool, st *schema.S
 		}
 		switch ctype {
 		case "c":
-			t.Checks = append(t.Checks, &schema.TableCheck{Name: cname, DefSQL: def})
+			t.Checks = append(t.Checks, &schema.TableCheck{Name: cname, DefSQL: def, Deferrable: deferrable, InitiallyDeferred: deferred})
 		case "f":
-			t.ForeignKeys = append(t.ForeignKeys, &schema.TableForeignKey{Name: cname, DefSQL: def})
+			fkMatch := ""
+			switch matchType {
+			case "f":
+				fkMatch = "FULL"
+			case "p":
+				fkMatch = "PARTIAL"
+				// "s" / "" / " " all map to default SIMPLE — leave empty.
+			}
+			t.ForeignKeys = append(t.ForeignKeys, &schema.TableForeignKey{Name: cname, DefSQL: def, Deferrable: deferrable, InitiallyDeferred: deferred, MatchType: fkMatch})
 		case "u":
-			t.Uniques = append(t.Uniques, &schema.TableUnique{Name: cname, DefSQL: def})
+			t.Uniques = append(t.Uniques, &schema.TableUnique{Name: cname, DefSQL: def, Deferrable: deferrable, InitiallyDeferred: deferred})
 		case "x":
-			t.Excludes = append(t.Excludes, &schema.TableExclusion{Name: cname, DefSQL: def})
+			t.Excludes = append(t.Excludes, &schema.TableExclusion{Name: cname, DefSQL: def, Deferrable: deferrable, InitiallyDeferred: deferred})
 		}
 	}
 	return rows.Err()
