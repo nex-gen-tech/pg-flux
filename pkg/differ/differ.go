@@ -446,6 +446,9 @@ func altersFor(schema, table string, w, h *schema.Column) []change {
 	if normDef(h.DefaultSQL) != normDef(w.DefaultSQL) && !isImplicitSerialDefault(h.DefaultSQL, w.DefaultSQL) {
 		o = append(o, change{kind: plan.ChangeAlterColumn, sch: schema, tbl: table, col: w.Name, dc: w, lc: h, alterKind: "def"})
 	}
+	if h.Identity != w.Identity {
+		o = append(o, change{kind: plan.ChangeAlterColumn, sch: schema, tbl: table, col: w.Name, dc: w, lc: h, alterKind: "identity"})
+	}
 	return o
 }
 
@@ -851,8 +854,45 @@ func alterStmt(c change) []plan.Statement {
 			ddl += " SET DEFAULT " + w.DefaultSQL
 		}
 		out = append(out, plan.Statement{OpType: "ALTER_DEFAULT", DDL: ddl, Object: schema.TableKey(c.sch, c.tbl) + "." + c.col})
+	case "identity":
+		base := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s", ident(c.sch), ident(c.tbl), ident(c.col))
+		objKey := schema.TableKey(c.sch, c.tbl) + "." + c.col
+		switch {
+		case c.lc != nil && c.lc.Identity == "" && w.Identity != "":
+			// Add identity to a previously-plain column.
+			out = append(out, plan.Statement{
+				OpType: "ADD_IDENTITY",
+				DDL:    fmt.Sprintf("%s ADD GENERATED %s AS IDENTITY", base, identityClause(w.Identity)),
+				Object: objKey,
+			})
+		case c.lc != nil && c.lc.Identity != "" && w.Identity == "":
+			// Drop identity entirely. IF EXISTS so reruns are safe.
+			out = append(out, plan.Statement{
+				OpType: "DROP_IDENTITY",
+				DDL:    base + " DROP IDENTITY IF EXISTS",
+				Object: objKey,
+			})
+		case c.lc != nil && c.lc.Identity != "" && w.Identity != "" && c.lc.Identity != w.Identity:
+			// Flip between ALWAYS and BY DEFAULT.
+			out = append(out, plan.Statement{
+				OpType: "SET_IDENTITY",
+				DDL:    fmt.Sprintf("%s SET GENERATED %s", base, identityClause(w.Identity)),
+				Object: objKey,
+			})
+		}
 	}
 	return out
+}
+
+// identityClause maps the schema.Column.Identity value to the SQL keyword form.
+func identityClause(kind string) string {
+	switch kind {
+	case "always":
+		return "ALWAYS"
+	case "by-default":
+		return "BY DEFAULT"
+	}
+	return ""
 }
 
 func createTableSQL(t *schema.Table) string {
@@ -871,12 +911,18 @@ func createTableSQL(t *schema.Table) string {
 		fmt.Fprintf(&b, "  %s %s", ident(c.Name), c.TypeSQL)
 		if c.GeneratedExpr != "" {
 			fmt.Fprintf(&b, " GENERATED ALWAYS AS (%s) STORED", c.GeneratedExpr)
+		} else if c.Identity != "" {
+			fmt.Fprintf(&b, " GENERATED %s AS IDENTITY", identityClause(c.Identity))
+			if c.IdentitySequenceOptions != "" {
+				fmt.Fprintf(&b, " (%s)", c.IdentitySequenceOptions)
+			}
 		} else if c.DefaultSQL != "" {
 			fmt.Fprintf(&b, " DEFAULT %s", c.DefaultSQL)
 		}
 		if c.IsPrimaryKey {
 			b.WriteString(" PRIMARY KEY")
-		} else if c.NotNull {
+		} else if c.NotNull && c.Identity == "" {
+			// IDENTITY implies NOT NULL — don't double-emit.
 			b.WriteString(" NOT NULL")
 		}
 	}

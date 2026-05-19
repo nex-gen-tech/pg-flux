@@ -279,6 +279,17 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 								col.GeneratedExpr = strings.TrimSpace(genExpr)
 							}
 						}
+					case pgq.ConstrType_CONSTR_IDENTITY:
+						// GENERATED ALWAYS / BY DEFAULT AS IDENTITY [(...)].
+						// generated_when is 'a' (always) or 'd' (by default), matching pg_attribute.attidentity.
+						switch cc.GetGeneratedWhen() {
+						case "a":
+							col.Identity = "always"
+						case "d":
+							col.Identity = "by-default"
+						}
+						// IDENTITY implies NOT NULL.
+						col.NotNull = true
 					}
 				}
 			}
