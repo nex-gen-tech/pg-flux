@@ -61,7 +61,14 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 			return err
 		}
 		return captureDeparsedExtraDDL(raw, st)
-	case *pgq.Node_DefineStmt, *pgq.Node_CompositeTypeStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
+	case *pgq.Node_CompositeTypeStmt:
+		// Structured capture so the differ can compare attributes (ADD/DROP/ALTER ATTRIBUTE).
+		// Also keep the raw DDL so first-apply still issues the CREATE TYPE statement.
+		if err := captureCompositeType(n.CompositeTypeStmt, st); err != nil {
+			return err
+		}
+		return captureDeparsedExtraDDL(raw, st)
+	case *pgq.Node_DefineStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
 		return captureDeparsedExtraDDL(raw, st)
 	// GRANT / REVOKE: capture structured privilege entries onto the target objects
 	// so the differ can compute set-diffs and emit minimal DDL. Object kinds we
