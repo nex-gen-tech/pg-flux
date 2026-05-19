@@ -63,9 +63,14 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 		return captureDeparsedExtraDDL(raw, st)
 	case *pgq.Node_DefineStmt, *pgq.Node_CompositeTypeStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
 		return captureDeparsedExtraDDL(raw, st)
-	// GRANT / REVOKE: pass-through as MiscObject so they are applied in plan order.
-	case *pgq.Node_GrantStmt, *pgq.Node_GrantRoleStmt:
-		return captureDeparsedMisc("GRANT", raw, st)
+	// GRANT / REVOKE: capture structured privilege entries onto the target objects
+	// so the differ can compute set-diffs and emit minimal DDL.
+	case *pgq.Node_GrantStmt:
+		return captureGrantStmt(n.GrantStmt, st)
+	case *pgq.Node_GrantRoleStmt:
+		// Role-membership grants are different from object-privilege grants; still
+		// passthrough until first-class role tracking lands.
+		return captureDeparsedMisc("GRANT_ROLE", raw, st)
 	// COMMENT ON ... IS '...' — set the Comment field on the target object.
 	case *pgq.Node_CommentStmt:
 		return captureComment(n.CommentStmt, st)

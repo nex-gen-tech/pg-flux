@@ -92,6 +92,11 @@ type Table struct {
 	// parsed into a sorted "key=value" slice). Examples: "fillfactor=70",
 	// "autovacuum_vacuum_scale_factor=0.1".
 	ReLOptions []string
+	// Privileges captures GRANT/REVOKE state on the table (from pg_class.relacl
+	// parsed via ParseACL). Empty means "no privileges recorded" — when the desired
+	// schema's source files include no GRANT statements, the differ leaves live
+	// permissions untouched to avoid accidental REVOKEs.
+	Privileges []Privilege
 	// Table-level CHECK / UNIQUE / EXCLUDE / FK
 	Checks      []*TableCheck
 	Uniques     []*TableUnique

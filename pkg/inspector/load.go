@@ -175,6 +175,10 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	if err := loadOwners(ctx, pool, st, schemas); err != nil {
 		return nil, err
 	}
+	// Annotate every loaded relation/function with its ACL (pg_class.relacl / pg_proc.proacl).
+	if err := loadPrivileges(ctx, pool, st, schemas); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 

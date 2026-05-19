@@ -41,6 +41,8 @@ type Function struct {
 	Rows float64
 	// Config holds SET clause entries (pg_proc.proconfig) like "search_path=public, pg_temp".
 	Config []string
+	// Privileges captures GRANT EXECUTE on this function (pg_proc.proacl).
+	Privileges []Privilege
 }
 
 // Policy is a row-level security policy.

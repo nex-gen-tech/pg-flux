@@ -42,6 +42,8 @@ type TableExclusion struct {
 	InitiallyDeferred bool
 }
 
+// Privileges field on every supported object kind; see schema.acl.go.
+
 // View is a regular or materialized view.
 type View struct {
 	Schema       string
@@ -56,6 +58,7 @@ type View struct {
 	SecurityBarrier bool
 	// SecurityInvoker is the PG15+ security_invoker reloption (run-as-invoker views).
 	SecurityInvoker bool
+	Privileges      []Privilege
 }
 
 // Sequence is a free-standing sequence.
@@ -68,7 +71,8 @@ type Sequence struct {
 	OwnedBy string
 	// AsType is the sequence's value type: "smallint", "integer", or "bigint".
 	// From pg_sequence.seqtypid → format_type. Defaults to "bigint" when not specified.
-	AsType string
+	AsType     string
+	Privileges []Privilege
 }
 
 // Trigger is a non-internal trigger.
