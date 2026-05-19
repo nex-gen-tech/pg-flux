@@ -9,12 +9,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/nexg/pg-flux/pkg/pgver"
 	"github.com/nexg/pg-flux/pkg/schema"
 )
 
 // Options configure catalog inspection.
 type Options struct {
 	Schemas []string // default public
+	// PGVersion is optional: when set, inspector queries that vary by version
+	// (e.g. NULLS NOT DISTINCT on PG15+) gate on it. When zero, Inspect detects
+	// the version itself via pgver.Detect.
+	PGVersion pgver.Version
 }
 
 // Inspect loads user tables, indexes, functions, and RLS policies from system catalogs in parallel.
@@ -29,7 +34,17 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	for i, s := range schemas {
 		schemas[i] = strings.ToLower(strings.TrimSpace(s))
 	}
+	// Detect server version if the caller didn't supply one. Fails loud below MinSupportedMajor.
+	pgv := opt.PGVersion
+	if pgv == (pgver.Version{}) {
+		detected, err := pgver.Detect(ctx, pool)
+		if err != nil {
+			return nil, err
+		}
+		pgv = detected
+	}
 	st := &schema.SchemaState{
+		PGVersion:  pgv,
 		Tables:     make(map[string]*schema.Table),
 		Indexes:    make(map[string]*schema.Index),
 		Functions:  make(map[string]*schema.Function),
@@ -152,6 +167,10 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 		return nil, err
 	}
 	st.PartitionChildren = pc
+	// Annotate every loaded object with its pg_description comment if any.
+	if err := loadComments(ctx, pool, st, schemas); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 

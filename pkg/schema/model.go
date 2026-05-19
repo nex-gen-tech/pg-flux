@@ -1,8 +1,14 @@
 // Package schema holds the internal schema model shared by the parser, inspector, and differ.
 package schema
 
+import "github.com/nexg/pg-flux/pkg/pgver"
+
 // SchemaState is the merged desired or live view of a database namespace subset.
 type SchemaState struct {
+	// PGVersion is the server version this state was inspected against (zero for desired
+	// state loaded purely from source files). Used by the differ to fail loud when desired
+	// uses a feature unsupported on the target server.
+	PGVersion pgver.Version
 	Tables    map[string]*Table
 	Indexes   map[string]*Index
 	Functions map[string]*Function
@@ -95,6 +101,7 @@ type Column struct {
 	DefaultSQL   string
 	IsPrimaryKey bool
 	Collation    string
+	Comment      string
 	// GeneratedExpr is non-empty for stored generated columns:
 	// the expression text (without GENERATED ALWAYS AS and STORED wrapper).
 	GeneratedExpr string
@@ -111,6 +118,7 @@ func (s *SchemaState) Clone() *SchemaState {
 		return nil
 	}
 	out := &SchemaState{
+		PGVersion: s.PGVersion,
 		Tables:    make(map[string]*Table, len(s.Tables)),
 		Indexes:   make(map[string]*Index, len(s.Indexes)),
 		Functions: make(map[string]*Function, len(s.Functions)),

@@ -9,6 +9,7 @@ type Index struct {
 	CreateSQL          string // deparse of CREATE INDEX, or pg_get_indexdef
 	Fingerprint        string // pg_query Fingerprint of normalized def (optional, filled by differ)
 	Concurrent         bool
+	Comment            string
 }
 
 // Function models a simple SQL/PLpgSQL function (one identity per name+arg types in v1).
@@ -22,6 +23,7 @@ type Function struct {
 	DefSQL      string
 	Fingerprint string
 	Identity    string // schema.name(args) for map key
+	Comment     string
 }
 
 // Policy is a row-level security policy.
@@ -32,6 +34,7 @@ type Policy struct {
 	UsingSQL, WithCheck string
 	Permissive          bool
 	DefSQL              string // for fingerprint / display
+	Comment             string
 }
 
 // IndexKey is schema-qualified index name in lower case.

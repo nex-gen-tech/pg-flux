@@ -127,22 +127,135 @@ func diffTableConstraints(dt, lt *schema.Table, colRenames map[string]string) []
 			})
 		}
 	}
-	return out
+	return collapseConstraintRenames(out, dt.Schema, dt.Name, colRenames)
 }
 
-// injectViewRefreshForTypeChanges ensures that views referencing a table whose column
-// type is being changed are dropped before and re-created after the ALTER COLUMN TYPE.
-// PostgreSQL refuses to ALTER the type of a column used by a view or rule.
-func injectViewRefreshForTypeChanges(changes []change, desired, live *schema.SchemaState) []change {
-	// Collect tables that have a column type change.
-	typeChangedTables := map[string]bool{} // schema.table key
-	for _, c := range changes {
-		if c.kind == plan.ChangeAlterColumn && c.alterKind == "type" {
-			typeChangedTables[schema.TableKey(c.sch, c.tbl)] = true
+// collapseConstraintRenames replaces (DROP X, ADD Y) pairs on the same table — where X and Y
+// share the same kind and have semantically identical definitions after applying any column
+// renames — with a single ALTER TABLE ... RENAME CONSTRAINT. Avoids unnecessary scans/locks
+// and preserves the constraint's underlying object identity.
+func collapseConstraintRenames(in []change, schemaName, tableName string, colRenames map[string]string) []change {
+	if len(in) < 2 {
+		return in
+	}
+	type addInfo struct {
+		idx  int
+		kind string
+		def  string
+	}
+	adds := make([]addInfo, 0, len(in))
+	for i, c := range in {
+		if c.kind == plan.ChangeAddConstraint {
+			adds = append(adds, addInfo{idx: i, kind: c.conKind, def: c.conDef})
 		}
 	}
-	if len(typeChangedTables) == 0 {
+	if len(adds) == 0 {
+		return in
+	}
+	used := make(map[int]bool, len(adds))
+	out := make([]change, 0, len(in))
+	for i, c := range in {
+		if c.kind != plan.ChangeDropConstraint {
+			out = append(out, c)
+			continue
+		}
+		matched := -1
+		for j, a := range adds {
+			if used[j] || a.kind != c.conKind {
+				continue
+			}
+			// Fingerprint the def text only — pass the same placeholder name on both sides
+			// so a rename (name differs, def matches) is not masked by name-in-the-hash.
+			const placeholder = "__pgflux_cmp__"
+			dropFp := tableConstraintDefFingerprint(schemaName, tableName, placeholder, applyColRenames(c.conDef, colRenames))
+			addFp := tableConstraintDefFingerprint(schemaName, tableName, placeholder, a.def)
+			if dropFp != "" && dropFp == addFp {
+				matched = j
+				break
+			}
+		}
+		if matched == -1 {
+			out = append(out, c)
+			continue
+		}
+		used[matched] = true
+		newName := in[adds[matched].idx].conName
+		out = append(out, change{
+			kind:    plan.ChangeRenameConstraint,
+			sch:     schemaName,
+			tbl:     tableName,
+			from:    c.conName,
+			conName: newName,
+			conKind: c.conKind,
+			conDef:  c.conDef,
+		})
+		// suppress the unused fields by hint
+		_ = i
+	}
+	// Filter out the matched ADDs that were collapsed.
+	if len(used) == 0 {
+		return out
+	}
+	filtered := out[:0]
+	for _, c := range out {
+		if c.kind != plan.ChangeAddConstraint {
+			filtered = append(filtered, c)
+			continue
+		}
+		drop := false
+		for j, a := range adds {
+			if used[j] && a.idx < len(in) && in[a.idx].conName == c.conName && in[a.idx].conDef == c.conDef {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
+// injectViewRefreshForTypeChanges ensures that views whose body references a column whose
+// type is being changed are dropped before and re-created after the ALTER COLUMN TYPE.
+// PostgreSQL refuses to ALTER the type of a column when a view's definition references
+// that specific column (column-level dependency, not table-level), so we only flag a
+// view when both the table name AND the changed column name appear in the view body.
+func injectViewRefreshForTypeChanges(changes []change, desired, live *schema.SchemaState) []change {
+	// Collect tables-and-columns that have a column type change.
+	// Map: schema.table -> set of column names whose type changes.
+	typeChangedCols := map[string]map[string]bool{}
+	for _, c := range changes {
+		if c.kind == plan.ChangeAlterColumn && c.alterKind == "type" {
+			tk := schema.TableKey(c.sch, c.tbl)
+			if typeChangedCols[tk] == nil {
+				typeChangedCols[tk] = map[string]bool{}
+			}
+			typeChangedCols[tk][c.col] = true
+		}
+	}
+	if len(typeChangedCols) == 0 {
 		return changes
+	}
+
+	// viewBodyReferencesCol returns true when `body` references column `col` somewhere
+	// that PostgreSQL treats as a column-level dependency. We use a column-name regex
+	// guarded by word boundaries; this errs on the side of dropping (correct + safe)
+	// when the same identifier appears in an unrelated context — but eliminates the
+	// far more common false-positive of "view uses table T but not col C".
+	colReferenced := func(body, tblSchema, tblName string, cols map[string]bool) bool {
+		reQual := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblSchema) + `\s*\.\s*` + regexp.QuoteMeta(tblName) + `\b`)
+		reBare := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblName) + `\b`)
+		if !reQual.MatchString(body) && !reBare.MatchString(body) {
+			return false
+		}
+		for col := range cols {
+			reCol := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(col) + `\b`)
+			if reCol.MatchString(body) {
+				return true
+			}
+		}
+		return false
 	}
 
 	// Determine which views need to be dropped early (before ALTER_COLUMN_TYPE).
@@ -151,20 +264,17 @@ func injectViewRefreshForTypeChanges(changes []change, desired, live *schema.Sch
 		if dv == nil {
 			continue
 		}
-		for tk := range typeChangedTables {
+		for tk, cols := range typeChangedCols {
 			parts := strings.SplitN(tk, ".", 2)
 			tblSchema := parts[0]
 			tblName := parts[len(parts)-1]
-			// Match schema.tablename or just tablename, avoiding false positives on bare names.
-			reQual := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblSchema) + `\s*\.\s*` + regexp.QuoteMeta(tblName) + `\b`)
-			reBare := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblName) + `\b`)
-			if reQual.MatchString(dv.DefSQL) || reBare.MatchString(dv.DefSQL) {
+			if colReferenced(dv.DefSQL, tblSchema, tblName, cols) {
 				needsEarlyDrop[vk] = true
 				break
 			}
 		}
 	}
-	// Also scan live-only views (being dropped) that reference type-changed tables —
+	// Also scan live-only views (being dropped) that reference type-changed columns —
 	// PostgreSQL still requires them to be dropped before ALTER COLUMN TYPE.
 	for vk, lv := range live.Views {
 		if lv == nil {
@@ -173,13 +283,11 @@ func injectViewRefreshForTypeChanges(changes []change, desired, live *schema.Sch
 		if desired.Views[vk] != nil {
 			continue // already handled above
 		}
-		for tk := range typeChangedTables {
+		for tk, cols := range typeChangedCols {
 			parts := strings.SplitN(tk, ".", 2)
 			tblSchema := parts[0]
 			tblName := parts[len(parts)-1]
-			reQual := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblSchema) + `\s*\.\s*` + regexp.QuoteMeta(tblName) + `\b`)
-			reBare := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tblName) + `\b`)
-			if reQual.MatchString(lv.DefSQL) || reBare.MatchString(lv.DefSQL) {
+			if colReferenced(lv.DefSQL, tblSchema, tblName, cols) {
 				needsEarlyDrop[vk] = true
 				break
 			}

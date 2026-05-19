@@ -66,6 +66,9 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 	// GRANT / REVOKE: pass-through as MiscObject so they are applied in plan order.
 	case *pgq.Node_GrantStmt, *pgq.Node_GrantRoleStmt:
 		return captureDeparsedMisc("GRANT", raw, st)
+	// COMMENT ON ... IS '...' — set the Comment field on the target object.
+	case *pgq.Node_CommentStmt:
+		return captureComment(n.CommentStmt, st)
 	default:
 		return nil
 	}

@@ -41,6 +41,7 @@ var (
 	validateSQLF     bool
 	appendValidateF  bool
 	reltupleThresh   float64
+	autoNotValidF    bool
 	shadowDSN        string
 	shadowSemanticF  bool
 	shadowEquivF     bool
@@ -100,8 +101,9 @@ func newRoot() *cobra.Command {
 	r.PersistentFlags().StringVar(&schemasFlag, "schemas", "public", "database schemas (comma list)")
 	r.PersistentFlags().BoolVar(&validatePlpgsqlF, "validate-plpgsql", false, "parse-check LANGUAGE plpgsql functions with pg_query (stricter load)")
 	r.PersistentFlags().BoolVar(&validateSQLF, "validate-sql", false, "re-parse each top-level statement (pg_query FR-01 check)")
-	r.PersistentFlags().BoolVar(&appendValidateF, "append-validate-not-valid", false, "emit synthetic VALIDATE CONSTRAINT after ADD ... NOT VALID")
-	r.PersistentFlags().Float64Var(&reltupleThresh, "set-not-null-reltuple-hint", 0, "if >0, advisory STAGED_SET_NOT_NULL when reltuples exceeds this (SET NOT NULL on large tables)")
+	r.PersistentFlags().BoolVar(&appendValidateF, "append-validate-not-valid", false, "emit synthetic VALIDATE CONSTRAINT after ADD ... NOT VALID (user-written)")
+	r.PersistentFlags().BoolVar(&autoNotValidF, "auto-not-valid", true, "auto-rewrite ADD CONSTRAINT CHECK/FK to NOT VALID + VALIDATE (PRD P3-14; default on)")
+	r.PersistentFlags().Float64Var(&reltupleThresh, "set-not-null-reltuple-hint", 10000, "rows above which SET NOT NULL is rewritten to the 4-step safe pattern (PRD P3-15; 0 disables)")
 	r.PersistentFlags().StringVar(&shadowDSN, "shadow-dsn", os.Getenv("PGFLUX_SHADOW_DSN"), "optional disposable DB DSN for shadow validation (see --shadow-semantic, --shadow-equivalence)")
 	r.PersistentFlags().BoolVar(&shadowSemanticF, "shadow-semantic", false, "if set with --shadow-dsn, apply the plan with autocommit on that DB (mutates DB — use disposable instance; stronger than rolled-back syntax check)")
 	r.PersistentFlags().BoolVar(&shadowEquivF, "shadow-equivalence", false, "with --shadow-dsn, run semantic apply on an empty shadow DB then require inspected catalog to match desired (structural check; not a formal proof vs production)")
@@ -278,6 +280,7 @@ func cmdMigrateGenerate() *cobra.Command {
 				MigrationsDir: migrationsDir,
 				Label:         label,
 				Schemas:       parseSchemas(),
+				Differ:        differOptionsFromFlags(),
 			})
 			if err != nil {
 				return err
@@ -661,11 +664,20 @@ func runDiff() (*differ.DiffResult, error) {
 	return differ.Diff(des, live, dopt)
 }
 
-func differOptions(ctx context.Context, pool *pgxpool.Pool, live *schema.SchemaState) (differ.Options, error) {
-	opt := differ.Options{
+// differOptionsFromFlags builds a differ.Options from the CLI flag state without
+// querying the database. Callers that have a live SchemaState and pool should use
+// differOptions to additionally populate Reltuples (needed for the staged SET NOT NULL
+// rewrite above SetNotNullReltupleThreshold).
+func differOptionsFromFlags() differ.Options {
+	return differ.Options{
 		AppendValidateAfterNotValid: appendValidateF,
+		AutoConstraintNotValid:     autoNotValidF,
 		SetNotNullReltupleThreshold: reltupleThresh,
 	}
+}
+
+func differOptions(ctx context.Context, pool *pgxpool.Pool, live *schema.SchemaState) (differ.Options, error) {
+	opt := differOptionsFromFlags()
 	if reltupleThresh <= 0 || pool == nil || live == nil {
 		return opt, nil
 	}

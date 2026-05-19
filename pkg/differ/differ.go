@@ -19,6 +19,10 @@ type Options struct {
 	SetNotNullReltupleThreshold float64
 	// AppendValidateAfterNotValid adds a follow-up ALTER TABLE … VALIDATE CONSTRAINT for each ADD CONSTRAINT that contains NOT VALID.
 	AppendValidateAfterNotValid bool
+	// AutoConstraintNotValid, when true, rewrites ADD CONSTRAINT CHECK/FK to use NOT VALID
+	// plus a follow-up VALIDATE CONSTRAINT (per PRD P3-14). Default ON in the CLI: keeps
+	// the AccessExclusive scan off the critical path.
+	AutoConstraintNotValid bool
 }
 
 // DiffResult contains a migration plan.
@@ -37,6 +41,10 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 	}
 	if live == nil {
 		live = &schema.SchemaState{Tables: map[string]*schema.Table{}}
+	}
+	// Fail loud when desired schema uses a feature unsupported on the live server.
+	if err := checkServerCompat(desired, live.PGVersion); err != nil {
+		return nil, err
 	}
 	var dep []string
 	var changes []change
@@ -164,6 +172,7 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 	changes = append(changes, diffDomains(desired, live)...)
 	changes = append(changes, diffExtraDDL(desired, live)...)
 	changes = append(changes, diffMiscObjects(desired)...)
+	changes = append(changes, diffComments(desired, live)...)
 	changes = injectViewRefreshForTypeChanges(changes, desired, live)
 	sortChangesDeterministic(desired, changes)
 	stmts := buildStatements(changes, desired, live, opt)
@@ -270,7 +279,9 @@ func columnOrderNotice(dt, lt *schema.Table) string {
 		}
 		liveName := dc.Name
 		if dc.RenameFrom != "" {
-			liveName = dc.RenameFrom
+			if _, ok := livePos[dc.RenameFrom]; ok {
+				liveName = dc.RenameFrom
+			}
 		}
 		if lp, ok := livePos[liveName]; ok {
 			surviving = append(surviving, pair{di, lp})
@@ -312,8 +323,18 @@ func diffColumns(dt, lt *schema.Table, dKey string) ([]change, error) {
 		if c.RenameFrom != "" {
 			old, ok := byName[c.RenameFrom]
 			if !ok {
-				if _, h := byName[c.Name]; h {
+				if exists, h := byName[c.Name]; h {
+					// Rename already applied to live DB. The hint is a no-op for the rename
+					// itself, but column-level diffs (type/notnull/default/generated) must
+					// still surface — otherwise leaving the hint in source silently swallows
+					// subsequent changes to this column.
 					used[c.Name] = true
+					if normDef(c.GeneratedExpr) != normDef(exists.GeneratedExpr) {
+						out = append(out, change{kind: plan.ChangeDropColumn, sch: dt.Schema, tbl: dt.Name, col: exists.Name, lc: exists})
+						out = append(out, change{kind: plan.ChangeAddColumn, sch: dt.Schema, tbl: dt.Name, col: c.Name, dc: c})
+					} else if colDiff(exists, c) {
+						out = append(out, altersFor(dt.Schema, dt.Name, c, exists)...)
+					}
 					continue
 				}
 				// Fresh database: no old or new column yet — add the desired column (rename hint is a no-op for bootstrap).
@@ -559,6 +580,11 @@ func stmtFor(c change, opt Options) []plan.Statement {
 			return nil
 		}
 		return []plan.Statement{{OpType: string(c.kind), DDL: c.pol.DefSQL, Object: c.polKey}}
+	case plan.ChangeAlterPolicy:
+		if c.pol == nil {
+			return nil
+		}
+		return []plan.Statement{{OpType: string(c.kind), DDL: buildAlterPolicySQL(c.pol), Object: c.polKey}}
 	case plan.ChangeDropPolicy:
 		if c.pol == nil {
 			return nil
@@ -571,16 +597,31 @@ func stmtFor(c change, opt Options) []plan.Statement {
 			Hazards: []hazard.Detected{{Type: hazard.DataLoss, Severity: hazard.SeverityAdvisory, Message: "Drops RLS policy"}},
 		}}
 	case plan.ChangeAddConstraint:
-		ddl := fmt.Sprintf("ALTER TABLE %s.%s ADD CONSTRAINT %s %s", ident(c.sch), ident(c.tbl), ident(c.conName), c.conDef)
+		def := c.conDef
+		hasNotValid := strings.Contains(strings.ToLower(def), "not valid")
+		// Auto-rewrite (PRD P3-14): for CHECK and FOREIGN KEY, append NOT VALID so the ADD
+		// only takes a short AccessExclusive lock; the long scan happens later under the
+		// less-blocking ShareUpdateExclusive lock of VALIDATE CONSTRAINT.
+		needsValidate := false
+		isCheckOrFK := c.conKind == "c" || c.conKind == "f"
+		if opt.AutoConstraintNotValid && isCheckOrFK && !hasNotValid {
+			def = strings.TrimRight(def, " ;") + " NOT VALID"
+			needsValidate = true
+		}
+		ddl := fmt.Sprintf("ALTER TABLE %s.%s ADD CONSTRAINT %s %s", ident(c.sch), ident(c.tbl), ident(c.conName), def)
 		out := []plan.Statement{{
 			OpType: string(c.kind), DDL: ddl, Object: schema.ConstraintKey(c.sch, c.tbl, c.conName),
 			Hazards: []hazard.Detected{{Type: hazard.ConstraintScan, Severity: hazard.SeverityBlocking, Message: "Adding constraint may scan table"}},
 		}}
-		if opt.AppendValidateAfterNotValid && strings.Contains(strings.ToLower(c.conDef), "not valid") {
+		// Emit a follow-up VALIDATE CONSTRAINT when:
+		//   - we just auto-appended NOT VALID, OR
+		//   - the user wrote NOT VALID in source and explicitly opted into the synthetic follow-up.
+		if needsValidate || (opt.AppendValidateAfterNotValid && hasNotValid) {
 			vddl := fmt.Sprintf("ALTER TABLE %s.%s VALIDATE CONSTRAINT %s", ident(c.sch), ident(c.tbl), ident(c.conName))
 			out = append(out, plan.Statement{
 				OpType: "VALIDATE_TABLE_CONSTRAINT", DDL: vddl, Object: schema.ConstraintKey(c.sch, c.tbl, c.conName),
-				Hazards: []hazard.Detected{{Type: hazard.ValidateConstraintScan, Severity: hazard.SeverityBlocking, Message: "Synthetic follow-up VALIDATE CONSTRAINT"}},
+				IsConcurrent: true, // ShareUpdateExclusive lock; safer outside the main txn for large tables
+				Hazards:      []hazard.Detected{{Type: hazard.ValidateConstraintScan, Severity: hazard.SeverityAdvisory, Message: "Validates constraint under ShareUpdateExclusive lock"}},
 			})
 		}
 		return out
@@ -591,6 +632,14 @@ func stmtFor(c change, opt Options) []plan.Statement {
 			DDL:     ddl,
 			Object:  schema.ConstraintKey(c.sch, c.tbl, c.conName),
 			Hazards: []hazard.Detected{{Type: hazard.DataLoss, Severity: hazard.SeverityBlocking, Message: "Drops constraint"}},
+		}}
+	case plan.ChangeRenameConstraint:
+		ddl := fmt.Sprintf("ALTER TABLE %s.%s RENAME CONSTRAINT %s TO %s",
+			ident(c.sch), ident(c.tbl), ident(c.from), ident(c.conName))
+		return []plan.Statement{{
+			OpType: string(c.kind),
+			DDL:    ddl,
+			Object: schema.ConstraintKey(c.sch, c.tbl, c.conName),
 		}}
 	case plan.ChangeCreateView:
 		if c.v == nil {
@@ -750,7 +799,10 @@ func alterStmt(c change) []plan.Statement {
 		}
 		// If the live column has a non-serial default, PostgreSQL will refuse to change the
 		// type because it cannot implicitly cast the default expression.  Drop the default
-		// first; the "def" alter emitted by altersFor will reinstate it afterwards.
+		// first; restore it after the type change either via altersFor's "def" alter (when
+		// the desired default differs) or via an explicit SET DEFAULT here (when defs match
+		// — altersFor emits no "def" alter, so without this the default is silently lost).
+		droppedLiveDefault := false
 		if c.lc != nil && c.lc.DefaultSQL != "" && !strings.HasPrefix(normDef(c.lc.DefaultSQL), "nextval(") {
 			dropDef := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s DROP DEFAULT",
 				ident(c.sch), ident(c.tbl), ident(c.col))
@@ -759,6 +811,7 @@ func alterStmt(c change) []plan.Statement {
 				DDL:    dropDef,
 				Object: schema.TableKey(c.sch, c.tbl) + "." + c.col,
 			})
+			droppedLiveDefault = true
 		}
 		ddl := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET DATA TYPE %s USING %s",
 			ident(c.sch), ident(c.tbl), ident(c.col), w.TypeSQL, usingExpr)
@@ -768,6 +821,18 @@ func alterStmt(c change) []plan.Statement {
 			Object:  schema.TableKey(c.sch, c.tbl) + "." + c.col,
 			Hazards: []hazard.Detected{{Type: hazard.ColumnTypeChange, Severity: hazard.SeverityBlocking, Message: "Column type change may rewrite table"}},
 		})
+		if droppedLiveDefault && w.DefaultSQL != "" && c.lc != nil {
+			defsMatch := normDef(c.lc.DefaultSQL) == normDef(w.DefaultSQL) || isImplicitSerialDefault(c.lc.DefaultSQL, w.DefaultSQL)
+			if defsMatch {
+				setDef := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET DEFAULT %s",
+					ident(c.sch), ident(c.tbl), ident(c.col), w.DefaultSQL)
+				out = append(out, plan.Statement{
+					OpType: "ALTER_DEFAULT",
+					DDL:    setDef,
+					Object: schema.TableKey(c.sch, c.tbl) + "." + c.col,
+				})
+			}
+		}
 	case "notnull":
 		if w.NotNull {
 			ddl := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET NOT NULL", ident(c.sch), ident(c.tbl), ident(c.col))

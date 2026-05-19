@@ -24,6 +24,7 @@ var createOrder = map[string]int{
 	"CREATE_WINDOW_FUNCTION":    7,
 	"DROP_POLICY":               8, // must run BEFORE CREATE_POLICY to allow replacing a policy by name
 	"CREATE_POLICY":             9,
+	"ALTER_POLICY":              9,
 	"CREATE_INDEX":              20,
 	"ALTER_DEFAULT":             4,
 	"ALTER_COLUMN_TYPE":         4,
@@ -35,6 +36,7 @@ var createOrder = map[string]int{
 	"RAW_DDL":                   200,
 	"ADD_COLUMN!":               3,
 	"ADD_TABLE_CONSTRAINT":      6,
+	"RENAME_TABLE_CONSTRAINT":   3, // run before ADD/DROP so dependent rewrites use the right name
 	"CREATE_SEQUENCE":           5,
 	"CREATE_TRIGGER":            14,
 	"CREATE_MATERIALIZED_VIEW":  35,

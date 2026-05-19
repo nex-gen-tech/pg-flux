@@ -20,8 +20,15 @@ const (
 	ChangeDropFunction   ChangeType = "DROP_FUNCTION"
 	ChangeCreatePolicy   ChangeType = "CREATE_POLICY"
 	ChangeDropPolicy     ChangeType = "DROP_POLICY"
+	// ChangeAlterPolicy modifies USING / WITH CHECK / role list of an existing policy in place,
+	// preserving RLS continuity (no DROP+CREATE window where the policy is absent).
+	ChangeAlterPolicy    ChangeType = "ALTER_POLICY"
 	ChangeAddConstraint  ChangeType = "ADD_TABLE_CONSTRAINT"
 	ChangeDropConstraint ChangeType = "DROP_TABLE_CONSTRAINT"
+	// ChangeRenameConstraint renames a constraint in place via ALTER TABLE ... RENAME CONSTRAINT.
+	// Emitted when a desired/live pair share the same kind and definition but differ only in name —
+	// avoids the lock and scan cost of DROP+ADD.
+	ChangeRenameConstraint ChangeType = "RENAME_TABLE_CONSTRAINT"
 	ChangeCreateView     ChangeType = "CREATE_VIEW"
 	ChangeDropView       ChangeType = "DROP_VIEW"
 	// ChangeDropViewEarly is a DROP VIEW emitted before ALTER COLUMN TYPE to unblock type changes.

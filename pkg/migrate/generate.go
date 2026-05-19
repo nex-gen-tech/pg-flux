@@ -25,6 +25,8 @@ type GenerateOptions struct {
 	Schemas []string
 	// AllowHazards is passed through to the differ (comma-separated list).
 	AllowHazards string
+	// Differ overrides the default differ.Options for this run (auto-rewrites, thresholds, etc.).
+	Differ differ.Options
 }
 
 // GenerateResult is returned by Generate.
@@ -55,7 +57,14 @@ func Generate(
 		return nil, fmt.Errorf("inspect live schema: %w", err)
 	}
 
-	diffResult, err := differ.Diff(desired, live, differ.Options{})
+	// Populate reltuples for the staged SET NOT NULL rewrite when caller asked for it.
+	if opts.Differ.SetNotNullReltupleThreshold > 0 && opts.Differ.Reltuples == nil && pool != nil && live != nil {
+		if rt, rerr := inspector.ReltuplesByTable(ctx, pool, live.Tables); rerr == nil {
+			opts.Differ.Reltuples = rt
+		}
+	}
+
+	diffResult, err := differ.Diff(desired, live, opts.Differ)
 	if err != nil {
 		return nil, fmt.Errorf("diff: %w", err)
 	}

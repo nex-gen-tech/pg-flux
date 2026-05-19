@@ -32,16 +32,19 @@ type View struct {
 	Name         string
 	DefSQL       string
 	Materialized bool
+	Comment      string
 }
 
 // Sequence is a free-standing sequence.
 type Sequence struct {
 	Schema, Name, DefSQL string
+	Comment              string
 }
 
 // Trigger is a non-internal trigger.
 type Trigger struct {
 	Schema, Table, Name, DefSQL string
+	Comment                     string
 }
 
 // ConstraintKey names a constraint within a table: schema.relation/constraint

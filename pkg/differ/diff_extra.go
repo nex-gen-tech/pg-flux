@@ -27,6 +27,18 @@ var reCastSuffix = regexp.MustCompile(`('+[^']*'+)::[a-z][a-z0-9 ]*`)
 // in a constraint expression (e.g. email::text like '%@%' → email like '%@%').
 var reTextCast = regexp.MustCompile(`::\s*text\b`)
 
+// reTypeCastBroad matches a PostgreSQL "::type" suffix, including multi-word types like
+// `::character varying`, `::double precision`, `::timestamp with time zone`, and size
+// modifiers like `::varchar(50)` or array suffixes `::int4[]`. Used by expression
+// normalizers so type-coercion noise added by pg_get_expr / pg_get_constraintdef does
+// not cause false-positive diffs against the source SQL.
+var reTypeCastBroad = regexp.MustCompile(
+	`::"?[\w]+"?(?:\."?[\w]+"?)?` + // ::name or ::schema.name (optionally quoted)
+		`(?:\s+(?:varying|precision|with(?:out)?\s+time\s+zone|to\s+\w+))*` + // multi-word trailers
+		`(?:\s*\(\s*\d+(?:\s*,\s*\d+)?\s*\))?` + // optional (n) or (n, m)
+		`(?:\s*\[\s*\])?`, // optional []
+)
+
 // reAnyCast strips any PostgreSQL type cast (::typename or ::schema.typename) from constraint
 // expressions. PostgreSQL adds casts like ::integer, ::bigint, ::numeric when columns of those
 // types appear in pg_get_constraintdef output, while source SQL omits them.
@@ -214,9 +226,10 @@ func createStmtDefFingerprint(s string) string {
 	dep = strings.ToLower(strings.TrimSpace(dep))
 	dep = reMultiSpace.ReplaceAllString(dep, " ")
 	dep = stripDefaultPublicSchemaQualifiers(dep)
-	// Strip type casts (::typename, ::schema.typename) added by pg_get_viewdef to match
-	// the source SQL which typically omits them (e.g. 'archived'::post_status → 'archived').
-	dep = reAnyCast.ReplaceAllString(dep, "")
+	// Strip type casts added by pg_get_viewdef / pg_get_triggerdef to match the source
+	// SQL which typically omits them (e.g. 'archived'::post_status → 'archived'; or
+	// handle::character varying → handle for generated-column-style coercions).
+	dep = reTypeCastBroad.ReplaceAllString(dep, "")
 	return strings.TrimSpace(reMultiSpace.ReplaceAllString(dep, " "))
 }
 
@@ -426,8 +439,15 @@ func diffPolicies(d, l *schema.SchemaState) []change {
 			continue
 		}
 		if !policiesEqual(dp, lp) {
-			out = append(out, change{kind: plan.ChangeDropPolicy, polKey: k, pol: lp})
-			out = append(out, change{kind: plan.ChangeCreatePolicy, pol: dp, polKey: k})
+			// Prefer ALTER POLICY when only USING/WITH CHECK/role list differ — Cmd
+			// (FOR ...) and Permissive (AS PERMISSIVE/RESTRICTIVE) cannot be altered
+			// in PostgreSQL, so those force DROP+CREATE.
+			if policyCmd(dp.Cmd).equals(policyCmd(lp.Cmd)) && dp.Permissive == lp.Permissive {
+				out = append(out, change{kind: plan.ChangeAlterPolicy, pol: dp, polKey: k})
+			} else {
+				out = append(out, change{kind: plan.ChangeDropPolicy, polKey: k, pol: lp})
+				out = append(out, change{kind: plan.ChangeCreatePolicy, pol: dp, polKey: k})
+			}
 		}
 	}
 	for k, lp := range l.Policies {
@@ -461,6 +481,8 @@ func policiesEqual(a, b *schema.Policy) bool {
 }
 
 // reTypeCast matches a trailing ::typename (including schema-qualified names).
+// Note: prefer reTypeCastBroad for fingerprint contexts where multi-word types
+// (character varying, timestamp with time zone, etc.) appear.
 var reTypeCast = regexp.MustCompile(`::[\w.]+`)
 
 // normExprForCompare normalises a standalone SQL expression for semantic comparison.
@@ -488,8 +510,10 @@ func normExprForCompare(s string) string {
 		}
 		s = strings.TrimSpace(dep)
 	}
-	// Strip type casts: ::typename and ::schema.typename
-	s = reTypeCast.ReplaceAllString(s, "")
+	// Strip type casts: ::typename, ::schema.typename, and multi-word types like
+	// `::character varying(50)` or `::timestamp with time zone` that PG injects in
+	// pg_get_expr output but the desired-state SQL omits.
+	s = reTypeCastBroad.ReplaceAllString(s, "")
 	// Strip pg_catalog. qualifier from built-in function names (pg_query deparser may add this
 	// when converting AT TIME ZONE to timezone() call, while the catalog stores the bare name).
 	s = strings.ReplaceAll(s, "pg_catalog.", "")
@@ -614,6 +638,39 @@ func seqParamsEqual(a, b string) bool {
 	return pa == pb
 }
 
+// buildAlterPolicySQL renders an ALTER POLICY statement for in-place modification of an
+// existing RLS policy. PostgreSQL's ALTER POLICY supports changing the TO role list,
+// the USING expression, and the WITH CHECK expression — but NOT the command kind
+// (FOR SELECT/INSERT/...) or AS PERMISSIVE/RESTRICTIVE. The caller is responsible for
+// ensuring those compatibility conditions before emitting this change.
+//
+// Clauses are emitted unconditionally when present on the desired policy so the result
+// is idempotent: re-applying the same ALTER POLICY against an already-aligned policy
+// leaves the catalog unchanged. This avoids the brief DROP+CREATE window that would
+// otherwise leave an RLS-enforcing table without its policy.
+func buildAlterPolicySQL(p *schema.Policy) string {
+	if p == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "ALTER POLICY %s ON %s.%s",
+		ident(p.Name), ident(p.Schema), ident(p.Table))
+	if len(p.Roles) > 0 {
+		roles := make([]string, len(p.Roles))
+		for i, r := range p.Roles {
+			roles[i] = ident(r)
+		}
+		fmt.Fprintf(&b, " TO %s", strings.Join(roles, ", "))
+	}
+	if strings.TrimSpace(p.UsingSQL) != "" {
+		fmt.Fprintf(&b, " USING (%s)", p.UsingSQL)
+	}
+	if strings.TrimSpace(p.WithCheck) != "" {
+		fmt.Fprintf(&b, " WITH CHECK (%s)", p.WithCheck)
+	}
+	return b.String()
+}
+
 // buildAlterSequenceSQL builds an ALTER SEQUENCE statement to update a sequence in-place
 // from the desired CREATE SEQUENCE SQL. This avoids DROP+CREATE which would reset the
 // current sequence value.  Returns "" if the desired SQL cannot be parsed.
@@ -630,9 +687,9 @@ func buildAlterSequenceSQL(desired *schema.Sequence) string {
 		cycleStr = "CYCLE"
 	}
 	return fmt.Sprintf(
-		"ALTER SEQUENCE IF EXISTS %s.%s INCREMENT BY %d MINVALUE %d MAXVALUE %d CACHE %d %s",
+		"ALTER SEQUENCE IF EXISTS %s.%s INCREMENT BY %d MINVALUE %d MAXVALUE %d START WITH %d CACHE %d %s",
 		ident(desired.Schema), ident(desired.Name),
-		p.increment, p.minvalue, p.maxvalue, p.cache, cycleStr,
+		p.increment, p.minvalue, p.maxvalue, p.start, p.cache, cycleStr,
 	)
 }
 
