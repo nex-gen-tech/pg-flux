@@ -8,6 +8,23 @@ import (
 	"github.com/nexg/pg-flux/pkg/schema"
 )
 
+// isStructuredGrantTarget reports whether the GrantStmt object kind is one we
+// track on the schema model (Privileges field). Other kinds are passed through
+// as MiscObjects so the source GRANT survives but isn't diffed.
+func isStructuredGrantTarget(t pgq.ObjectType) bool {
+	switch t {
+	case pgq.ObjectType_OBJECT_TABLE,
+		pgq.ObjectType_OBJECT_VIEW,
+		pgq.ObjectType_OBJECT_MATVIEW,
+		pgq.ObjectType_OBJECT_SEQUENCE,
+		pgq.ObjectType_OBJECT_FUNCTION,
+		pgq.ObjectType_OBJECT_PROCEDURE,
+		pgq.ObjectType_OBJECT_ROUTINE:
+		return true
+	}
+	return false
+}
+
 // captureGrantStmt walks a GRANT or REVOKE node and attaches the resulting
 // Privilege records to the matching object in st. Falls back to MiscObject
 // pass-through for object kinds pg-flux doesn't yet track (DATABASE, LANGUAGE,

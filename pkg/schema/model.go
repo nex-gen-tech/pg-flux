@@ -44,6 +44,9 @@ type SchemaState struct {
 	ExtraDDL []string
 	// MiscObjects lists recognized but not fully modeled objects (FDW, event triggers, etc.).
 	MiscObjects []*MiscObject
+	// DefaultPrivileges captures ALTER DEFAULT PRIVILEGES state (from pg_default_acl
+	// or from source-file ALTER DEFAULT PRIVILEGES statements).
+	DefaultPrivileges []*DefaultPrivilege
 }
 
 // RLSFlags carries pending RLS enable/force flags for a table.

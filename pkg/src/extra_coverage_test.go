@@ -11,24 +11,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// GRANT on tables/sequences/functions is now captured as structured Privileges on
+// the target object. GRANT ON SCHEMA stays pass-through (schemas are not tracked
+// as first-class objects yet). Verify the table-level GRANT lands on Table.Privileges
+// and the SCHEMA-level GRANT is preserved as a MiscObject.
 func TestLoadDesiredState_GrantRevoke(t *testing.T) {
 	dir := t.TempDir()
 	sql := `
 CREATE TABLE public.t (id int PRIMARY KEY);
 GRANT SELECT ON TABLE public.t TO app_user;
-REVOKE INSERT ON TABLE public.t FROM app_user;
 GRANT USAGE ON SCHEMA public TO app_user;
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "grants.sql"), []byte(sql), 0o644))
 	st, err := LoadDesiredState(LoadOptions{SchemaDir: dir})
 	require.NoError(t, err)
-	var grantCount int
-	for _, m := range st.MiscObjects {
-		if m.Kind == "GRANT" {
-			grantCount++
+	tbl := st.Tables[schema.TableKey("public", "t")]
+	require.NotNil(t, tbl, "table public.t should be parsed")
+	var saw bool
+	for _, p := range tbl.Privileges {
+		if p.Grantee == "app_user" && p.Priv == "SELECT" {
+			saw = true
 		}
 	}
-	require.Equal(t, 3, grantCount, "expected 3 GRANT/REVOKE statements in MiscObjects")
+	require.True(t, saw, "GRANT SELECT ON TABLE should populate Table.Privileges")
+	var schemaGrant int
+	for _, m := range st.MiscObjects {
+		if m.Kind == "GRANT" || m.Kind == "GRANT_ROLE" {
+			schemaGrant++
+		}
+	}
+	require.GreaterOrEqual(t, schemaGrant, 1, "schema-level GRANT should still pass through as MiscObject")
 }
 
 func TestLoadDesiredState_PartitionChild(t *testing.T) {

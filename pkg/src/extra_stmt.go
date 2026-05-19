@@ -64,9 +64,14 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 	case *pgq.Node_DefineStmt, *pgq.Node_CompositeTypeStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
 		return captureDeparsedExtraDDL(raw, st)
 	// GRANT / REVOKE: capture structured privilege entries onto the target objects
-	// so the differ can compute set-diffs and emit minimal DDL.
+	// so the differ can compute set-diffs and emit minimal DDL. Object kinds we
+	// don't track (DATABASE, SCHEMA, LANGUAGE, TABLESPACE, FDW, …) fall back to
+	// MiscObject pass-through.
 	case *pgq.Node_GrantStmt:
-		return captureGrantStmt(n.GrantStmt, st)
+		if isStructuredGrantTarget(n.GrantStmt.GetObjtype()) {
+			return captureGrantStmt(n.GrantStmt, st)
+		}
+		return captureDeparsedMisc("GRANT", raw, st)
 	case *pgq.Node_GrantRoleStmt:
 		// Role-membership grants are different from object-privilege grants; still
 		// passthrough until first-class role tracking lands.
@@ -74,6 +79,9 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 	// COMMENT ON ... IS '...' — set the Comment field on the target object.
 	case *pgq.Node_CommentStmt:
 		return captureComment(n.CommentStmt, st)
+	// ALTER DEFAULT PRIVILEGES — track on SchemaState.DefaultPrivileges.
+	case *pgq.Node_AlterDefaultPrivilegesStmt:
+		return captureAlterDefaultPrivileges(n.AlterDefaultPrivilegesStmt, st)
 	default:
 		return nil
 	}

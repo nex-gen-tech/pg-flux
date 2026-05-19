@@ -179,6 +179,10 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	if err := loadPrivileges(ctx, pool, st, schemas); err != nil {
 		return nil, err
 	}
+	// Default privileges (pg_default_acl) per (role, schema, objtype).
+	if err := loadDefaultPrivileges(ctx, pool, st, schemas); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 
