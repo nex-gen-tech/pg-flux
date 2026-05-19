@@ -7,12 +7,17 @@ import (
 
 	"github.com/nexg/pg-flux/pkg/dag"
 	"github.com/nexg/pg-flux/pkg/hazard"
+	"github.com/nexg/pg-flux/pkg/pgver"
 	"github.com/nexg/pg-flux/pkg/plan"
 	"github.com/nexg/pg-flux/pkg/schema"
 )
 
 // Options configures differ behavior.
 type Options struct {
+	// PGVersion is the connected server version. Used to gate emit paths that
+	// depend on syntax availability (e.g. inline STORAGE in CREATE TABLE is PG16+).
+	// When zero, the emitter assumes the latest supported PG.
+	PGVersion pgver.Version
 	// Reltuples maps "schema.table" to pg_class.reltuples estimates (live DB). Used for large-table SET NOT NULL advisories.
 	Reltuples map[string]float64
 	// SetNotNullReltupleThreshold triggers STAGED_SET_NOT_NULL advisory when reltuples exceeds this (0 = disabled).
@@ -45,6 +50,11 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 	// Fail loud when desired schema uses a feature unsupported on the live server.
 	if err := checkServerCompat(desired, live.PGVersion); err != nil {
 		return nil, err
+	}
+	// Default the emitter PGVersion to the live one when unset so downstream code
+	// (createTableSQL2, etc.) can branch on syntax availability.
+	if opt.PGVersion == (pgver.Version{}) {
+		opt.PGVersion = live.PGVersion
 	}
 	var dep []string
 	var changes []change
@@ -488,9 +498,19 @@ func stmtFor(c change, opt Options) []plan.Statement {
 		if c.t == nil {
 			return nil
 		}
-		return []plan.Statement{{
-			OpType: string(c.kind), DDL: createTableSQL(c.t), Object: schema.TableKey(c.sch, c.tbl),
+		// pgver is consulted to gate inline STORAGE in CREATE TABLE (PG16+ only).
+		// On older servers we emit the CREATE + post-table ALTER COLUMN SET STORAGE.
+		ddl, postAlter := createTableSQL2(c.t, opt.PGVersion)
+		stmts := []plan.Statement{{
+			OpType: string(c.kind), DDL: ddl, Object: schema.TableKey(c.sch, c.tbl),
 		}}
+		for _, a := range postAlter {
+			stmts = append(stmts, plan.Statement{
+				OpType: "ALTER_COLUMN_STORAGE", DDL: a,
+				Object: schema.TableKey(c.sch, c.tbl),
+			})
+		}
+		return stmts
 	case plan.ChangeDropTable:
 		ddl := fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE", qt(c.sch, c.tbl))
 		return []plan.Statement{{
@@ -909,10 +929,21 @@ func identityClause(kind string) string {
 	return ""
 }
 
+// createTableSQL is the legacy entry point (no pgver) — emit inline STORAGE.
 func createTableSQL(t *schema.Table) string {
+	ddl, _ := createTableSQL2(t, pgver.Version{Major: 999})
+	return ddl
+}
+
+// createTableSQL2 returns the CREATE TABLE DDL plus a list of follow-up ALTER
+// COLUMN SET STORAGE statements when the target PG version is below 16 (the
+// version where inline STORAGE in CREATE TABLE became valid). On PG16+ the
+// inline form is used and postAlter is nil.
+func createTableSQL2(t *schema.Table, pgv pgver.Version) (string, []string) {
 	if t == nil {
-		return ""
+		return "", nil
 	}
+	inlineStorage := pgv.Major == 0 || pgv.AtLeast(16)
 	var b strings.Builder
 	if t.Unlogged {
 		fmt.Fprintf(&b, "CREATE UNLOGGED TABLE IF NOT EXISTS %s.%s (\n", ident(t.Schema), ident(t.Name))
@@ -930,10 +961,12 @@ func createTableSQL(t *schema.Table) string {
 		if c.Collation != "" {
 			fmt.Fprintf(&b, " COLLATE %s", ident(c.Collation))
 		}
-		if c.Storage != "" {
+		if c.Storage != "" && inlineStorage {
 			fmt.Fprintf(&b, " STORAGE %s", strings.ToUpper(c.Storage))
 		}
 		if c.Compression != "" {
+			// COMPRESSION inline in CREATE TABLE was added in PG14; pg-flux requires PG14+
+			// so this is always safe.
 			fmt.Fprintf(&b, " COMPRESSION %s", c.Compression)
 		}
 		if c.GeneratedExpr != "" {
@@ -997,7 +1030,19 @@ func createTableSQL(t *schema.Table) string {
 		fmt.Fprintf(&b, " PARTITION BY %s", t.PartitionBy)
 	}
 	b.WriteString(";")
-	return b.String()
+	// Post-table ALTER COLUMN SET STORAGE statements for pre-PG16 servers.
+	var postAlter []string
+	if !inlineStorage {
+		for _, c := range t.Columns {
+			if c == nil || c.Storage == "" {
+				continue
+			}
+			postAlter = append(postAlter, fmt.Sprintf(
+				"ALTER TABLE %s.%s ALTER COLUMN %s SET STORAGE %s",
+				ident(t.Schema), ident(t.Name), ident(c.Name), strings.ToUpper(c.Storage)))
+		}
+	}
+	return b.String(), postAlter
 }
 
 func ident(s string) string {
