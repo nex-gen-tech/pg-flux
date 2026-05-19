@@ -191,6 +191,12 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	if err := loadStatistics(ctx, pool, st, schemas); err != nil {
 		return nil, err
 	}
+	// Exotic / less-common objects: composite/range types, FDW servers, foreign
+	// tables, publications, subscriptions. Best-effort; some queries require
+	// superuser (subscriptions) and silently skip on permission denied.
+	if err := loadExoticObjects(ctx, pool, st, schemas); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 

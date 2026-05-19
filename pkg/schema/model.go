@@ -51,6 +51,15 @@ type SchemaState struct {
 	EventTriggers map[string]*EventTrigger
 	// Statistics (pg_statistic_ext) — extended planner statistics.
 	Statistics map[string]*Statistics
+	// CompositeTypes captures CREATE TYPE name AS (...) records. Keyed schema.name.
+	CompositeTypes map[string]*CompositeType
+	// RangeTypes captures CREATE TYPE name AS RANGE (...) records.
+	RangeTypes map[string]*RangeType
+	// ForeignServers / ForeignTables / Publications / Subscriptions for FDW + logical replication.
+	ForeignServers map[string]*ForeignServer
+	ForeignTables  map[string]*ForeignTable
+	Publications   map[string]*Publication
+	Subscriptions  map[string]*Subscription
 }
 
 // RLSFlags carries pending RLS enable/force flags for a table.

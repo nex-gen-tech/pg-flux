@@ -145,3 +145,70 @@ func StatisticsKey(sch, name string) string {
 	}
 	return sch + "." + strings.ToLower(name)
 }
+
+// CompositeType models a CREATE TYPE ... AS (col1 type1, col2 type2, ...) record.
+type CompositeType struct {
+	Schema, Name string
+	// Attributes preserves attribute order: each entry is "name type" (lowercased name).
+	Attributes []CompositeAttribute
+	Owner      string
+	Comment    string
+}
+
+// CompositeAttribute is one (name, type) pair.
+type CompositeAttribute struct {
+	Name string
+	Type string
+}
+
+// RangeType models a CREATE TYPE ... AS RANGE (SUBTYPE = ...) record.
+type RangeType struct {
+	Schema, Name string
+	Subtype      string
+	// Options captures additional clauses (subtype_opclass, collation, canonical,
+	// subtype_diff, multirange_type_name). Stored as "key=value" strings.
+	Options []string
+	Owner   string
+	Comment string
+}
+
+// ForeignServer models a CREATE SERVER record (pg_foreign_server).
+type ForeignServer struct {
+	Name    string
+	Type    string
+	Version string
+	Wrapper string
+	Options []string
+	Owner   string
+	Comment string
+}
+
+// ForeignTable models a CREATE FOREIGN TABLE record (pg_foreign_table joined with pg_class).
+type ForeignTable struct {
+	Schema, Name string
+	Server       string
+	Columns      []*Column
+	Options      []string
+	Owner        string
+	Comment      string
+}
+
+// Publication models a CREATE PUBLICATION record (pg_publication).
+type Publication struct {
+	Name      string
+	AllTables bool
+	Tables    []string
+	Schemas   []string
+	Publish   string
+	Owner     string
+}
+
+// Subscription models a CREATE SUBSCRIPTION record (pg_subscription).
+type Subscription struct {
+	Name         string
+	ConnInfo     string // Often redacted in source; PG stores in pg_subscription.subconninfo.
+	Publications []string
+	Options      []string
+	Enabled      bool
+	Owner        string
+}
