@@ -17,7 +17,7 @@ type Function struct {
 	Schema   string
 	Name     string
 	Language string
-	// Kind matches pg_proc.prokind: f=function, a=aggregate, w=window.
+	// Kind matches pg_proc.prokind: f=function, a=aggregate, w=window, p=procedure.
 	Kind string
 	// DefSQL is CREATE OR REPLACE from source or pg_get_functiondef; compared via fingerprint in differ.
 	DefSQL      string
@@ -25,6 +25,22 @@ type Function struct {
 	Identity    string // schema.name(args) for map key
 	Comment     string
 	Owner       string
+	// Metadata fields (ALTER FUNCTION ... attribute):
+	// Volatility: "IMMUTABLE" | "STABLE" | "VOLATILE" — from pg_proc.provolatile (i/s/v).
+	Volatility string
+	// Security: "DEFINER" | "INVOKER" — from pg_proc.prosecdef.
+	Security string
+	// Parallel: "SAFE" | "RESTRICTED" | "UNSAFE" — from pg_proc.proparallel (s/r/u).
+	Parallel string
+	// LeakProof: from pg_proc.proleakproof.
+	LeakProof bool
+	// Cost is the planner cost estimate (pg_proc.procost). Zero means "use default".
+	Cost float64
+	// Rows is the planner rows estimate for SETOF-returning functions (pg_proc.prorows).
+	// Zero means "use default" (1000 for SETOF, 1 otherwise).
+	Rows float64
+	// Config holds SET clause entries (pg_proc.proconfig) like "search_path=public, pg_temp".
+	Config []string
 }
 
 // Policy is a row-level security policy.

@@ -302,11 +302,18 @@ func loadFunctionMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 			COALESCE((
 				SELECT string_agg(format_type(x, NULL), ', ' ORDER BY ord)
 				FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS u(x, ord)
-			), '') AS argtypes
+			), '') AS argtypes,
+			p.provolatile::text,
+			p.prosecdef,
+			p.proparallel::text,
+			p.proleakproof,
+			p.procost,
+			p.prorows,
+			COALESCE(p.proconfig, ARRAY[]::text[]) AS proconfig
 		FROM pg_proc p
 		JOIN pg_namespace n ON n.oid = p.pronamespace
 		JOIN pg_language l ON l.oid = p.prolang
-		WHERE n.nspname = ANY($1) AND p.prokind IN ('f', 'a', 'w')
+		WHERE n.nspname = ANY($1) AND p.prokind IN ('f', 'a', 'w', 'p')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM pg_depend d
 		    WHERE d.objid = p.oid AND d.deptype = 'e'
@@ -319,12 +326,46 @@ func loadFunctionMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 	out := make(map[string]*schema.Function)
 	for rows.Next() {
 		var nsp, name, lang, pkind, def, argtypes string
-		if err := rows.Scan(&nsp, &name, &lang, &pkind, &def, &argtypes); err != nil {
+		var provolatile, proparallel string
+		var prosecdef, proleakproof bool
+		var procost, prorows float64
+		var proconfig []string
+		if err := rows.Scan(&nsp, &name, &lang, &pkind, &def, &argtypes,
+			&provolatile, &prosecdef, &proparallel, &proleakproof, &procost, &prorows, &proconfig); err != nil {
 			return nil, err
 		}
 		identity := schema.BuildFunctionIdentity(nsp, name, argtypes)
 		fk := schema.FunctionKey(identity)
-		out[fk] = &schema.Function{Schema: nsp, Name: name, Language: strings.ToLower(lang), Kind: pkind, DefSQL: def, Identity: identity}
+		fn := &schema.Function{
+			Schema: nsp, Name: name, Language: strings.ToLower(lang), Kind: pkind,
+			DefSQL: def, Identity: identity,
+			LeakProof: proleakproof,
+			Cost:      procost,
+			Rows:      prorows,
+			Config:    proconfig,
+		}
+		switch provolatile {
+		case "i":
+			fn.Volatility = "IMMUTABLE"
+		case "s":
+			fn.Volatility = "STABLE"
+		case "v":
+			fn.Volatility = "VOLATILE"
+		}
+		if prosecdef {
+			fn.Security = "DEFINER"
+		} else {
+			fn.Security = "INVOKER"
+		}
+		switch proparallel {
+		case "s":
+			fn.Parallel = "SAFE"
+		case "r":
+			fn.Parallel = "RESTRICTED"
+		case "u":
+			fn.Parallel = "UNSAFE"
+		}
+		out[fk] = fn
 	}
 	return out, rows.Err()
 }
