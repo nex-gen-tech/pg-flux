@@ -241,7 +241,7 @@ func captureFunction(x *pgq.CreateFunctionStmt, raw *pgq.RawStmt, st *schema.Sch
 	if st.Functions[fk] != nil {
 		return fmt.Errorf("duplicate function %q", fk)
 	}
-	st.Functions[fk] = &schema.Function{
+	fn := &schema.Function{
 		Schema:      schemaName,
 		Name:        name,
 		Language:    "sql",
@@ -249,8 +249,106 @@ func captureFunction(x *pgq.CreateFunctionStmt, raw *pgq.RawStmt, st *schema.Sch
 		DefSQL:      sql,
 		Identity:    identity,
 		Fingerprint: fp,
+		Volatility:  "VOLATILE", // PG default unless overridden by options
+		Security:    "INVOKER",  // PG default
+		Parallel:    "UNSAFE",   // PG default
 	}
+	if x.GetIsProcedure() {
+		fn.Kind = "p"
+	}
+	// Walk the function options list (DefElem list) to extract metadata clauses.
+	for _, opt := range x.GetOptions() {
+		el := opt.GetDefElem()
+		if el == nil {
+			continue
+		}
+		switch strings.ToLower(el.GetDefname()) {
+		case "language":
+			if s := el.GetArg().GetString_(); s != nil {
+				fn.Language = strings.ToLower(s.GetSval())
+			}
+		case "volatility":
+			if s := el.GetArg().GetString_(); s != nil {
+				fn.Volatility = strings.ToUpper(s.GetSval())
+			}
+		case "security":
+			// PG encodes SECURITY DEFINER as defname="security" arg=true (Boolean).
+			if b := el.GetArg().GetBoolean(); b != nil {
+				if b.GetBoolval() {
+					fn.Security = "DEFINER"
+				} else {
+					fn.Security = "INVOKER"
+				}
+			}
+		case "parallel":
+			if s := el.GetArg().GetString_(); s != nil {
+				fn.Parallel = strings.ToUpper(s.GetSval())
+			}
+		case "leakproof":
+			if b := el.GetArg().GetBoolean(); b != nil {
+				fn.LeakProof = b.GetBoolval()
+			}
+		case "cost":
+			fn.Cost = defElemFloat(el.GetArg())
+		case "rows":
+			fn.Rows = defElemFloat(el.GetArg())
+		case "set":
+			// SET search_path = ... encoded as VariableSetStmt inside the DefElem.
+			if vs := el.GetArg().GetVariableSetStmt(); vs != nil {
+				if cfg := formatVariableSet(vs); cfg != "" {
+					fn.Config = append(fn.Config, cfg)
+				}
+			}
+		}
+	}
+	st.Functions[fk] = fn
 	return nil
+}
+
+// defElemFloat extracts a float64 from a DefElem's argument (Integer or Float).
+func defElemFloat(n *pgq.Node) float64 {
+	if n == nil {
+		return 0
+	}
+	if i := n.GetInteger(); i != nil {
+		return float64(i.GetIval())
+	}
+	if f := n.GetFloat(); f != nil {
+		var v float64
+		fmt.Sscanf(f.GetFval(), "%g", &v)
+		return v
+	}
+	return 0
+}
+
+// formatVariableSet renders a VariableSetStmt (the inner node of SET search_path = ...)
+// back to "key=val[,val2,...]" form matching pg_proc.proconfig.
+func formatVariableSet(vs *pgq.VariableSetStmt) string {
+	if vs == nil || vs.GetName() == "" {
+		return ""
+	}
+	var vals []string
+	for _, a := range vs.GetArgs() {
+		if s := a.GetString_(); s != nil {
+			vals = append(vals, s.GetSval())
+			continue
+		}
+		if i := a.GetInteger(); i != nil {
+			vals = append(vals, fmt.Sprintf("%d", i.GetIval()))
+			continue
+		}
+		if tc := a.GetTypeCast(); tc != nil {
+			if s := tc.GetArg().GetAConst().GetSval(); s != nil {
+				vals = append(vals, s.GetSval())
+			}
+		}
+		if c := a.GetAConst(); c != nil {
+			if s := c.GetSval(); s != nil {
+				vals = append(vals, s.GetSval())
+			}
+		}
+	}
+	return vs.GetName() + "=" + strings.Join(vals, ",")
 }
 
 func functionIdentityString(schemaName string, x *pgq.CreateFunctionStmt) string {

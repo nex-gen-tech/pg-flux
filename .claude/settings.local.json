@@ -6,7 +6,15 @@
       "Bash(PGPASSWORD=erestro psql -h localhost -p 5433 -U erestro -d postgres -c \"CREATE DATABASE pgflux_v2_test;\")",
       "Bash(mkdir -p /tmp/v2_mig)",
       "Bash(rm -f /tmp/v2_mig/*)",
-      "Bash(/Users/ramanandakairi/nexg/pg-flux/pg-flux migrate *)"
+      "Bash(/Users/ramanandakairi/nexg/pg-flux/pg-flux migrate *)",
+      "Bash(PGPASSWORD=erestro psql -h localhost -p 5433 -U erestro -d pgflux_v2_test -c \"CREATE ROLE app_writer NOLOGIN;\")",
+      "Bash(PGPASSWORD=pgflux psql -h localhost -p 5440 -U pgflux -d pgflux -c \"CREATE ROLE app_writer NOLOGIN;\")",
+      "Bash(/Users/ramanandakairi/nexg/pg-flux/pg-flux drift *)",
+      "Bash(PGPASSWORD=pgflux psql -h localhost -p 5440 -U pgflux -d pgflux -c \"DROP DATABASE IF EXISTS pgflux_v2;\")",
+      "Bash(PGPASSWORD=pgflux psql -h localhost -p 5440 -U pgflux -d pgflux -c \"CREATE DATABASE pgflux_v2;\")",
+      "Bash(PGPASSWORD=pgflux psql -h localhost -p 5440 -U pgflux -d pgflux_v2 -c \"CREATE ROLE app_writer NOLOGIN;\")",
+      "Bash(grep -v '^$')",
+      "Bash(grep -vE '^\\(Usage|  -|Global|$|Flags\\)')"
     ]
   }
 }

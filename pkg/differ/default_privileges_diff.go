@@ -12,6 +12,11 @@ import (
 // (role, schema, objtype) entries differ from live's pg_default_acl. Only manages
 // entries where the desired state has at least one DefaultPrivilege (declarative
 // opt-in — empty source means "leave alone").
+//
+// Matching: an ALTER DEFAULT PRIVILEGES without a FOR ROLE clause records the
+// privilege under the CURRENT_USER role in pg_default_acl. Source files with no
+// FOR ROLE clause have ForRole="" — we match those against any live entry whose
+// schema+objtype matches, regardless of role.
 func diffDefaultPrivileges(d, l *schema.SchemaState) []change {
 	var out []change
 	if d == nil || len(d.DefaultPrivileges) == 0 {
@@ -23,13 +28,30 @@ func diffDefaultPrivileges(d, l *schema.SchemaState) []change {
 	// Index by Key for set-diff.
 	dIdx := indexDefaults(d.DefaultPrivileges)
 	lIdx := indexDefaults(l.DefaultPrivileges)
+	// Fall-back match: desired entries with ForRole="" can match live entries that
+	// only differ in ForRole.
+	matchLive := func(d *schema.DefaultPrivilege) *schema.DefaultPrivilege {
+		if e, ok := lIdx[d.Key()]; ok {
+			return e
+		}
+		if d.ForRole != "" {
+			return nil
+		}
+		for _, l := range lIdx {
+			if l.InSchema == d.InSchema && l.ObjectType == d.ObjectType {
+				return l
+			}
+		}
+		return nil
+	}
 	for k, dEntry := range dIdx {
-		lEntry := lIdx[k]
+		lEntry := matchLive(dEntry)
 		var lGrants []schema.Privilege
 		if lEntry != nil {
 			lGrants = lEntry.Grants
 		}
 		grants, revokes := schema.DiffPrivileges(dEntry.Grants, lGrants)
+		_ = k
 		for _, p := range revokes {
 			out = append(out, change{
 				kind:   plan.ChangeRawSQL,

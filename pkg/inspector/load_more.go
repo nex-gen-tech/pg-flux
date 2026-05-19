@@ -203,11 +203,12 @@ func loadSequenceMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		JOIN pg_sequence s ON s.seqrelid = c.oid
 		WHERE c.relkind = 'S' AND n.nspname = ANY($1)
-		-- Exclude sequences that are owned by a column (implicit serial/bigserial sequences).
+		-- Exclude only INTERNAL-dependency sequences (IDENTITY columns) — these are
+		-- managed by the column, not as standalone objects. Explicit CREATE SEQUENCE
+		-- ... OWNED BY (deptype='a') is INCLUDED so source-declared sequences round-trip.
 		AND NOT EXISTS (
 			SELECT 1 FROM pg_depend d
-			JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
-			WHERE d.objid = c.oid AND d.deptype = 'a' AND d.classid = 'pg_class'::regclass
+			WHERE d.objid = c.oid AND d.deptype = 'i' AND d.classid = 'pg_class'::regclass
 		)
 		ORDER BY n.nspname, c.relname
 	`, schemas)

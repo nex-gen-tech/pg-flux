@@ -396,10 +396,53 @@ func diffSequences(d, l *schema.SchemaState) []change {
 			continue
 		}
 		if d.Sequences[k] == nil {
+			// Suppress DROP for sequences PG auto-created for a bigserial/serial column
+			// (live OwnedBy is set + the owning column has a nextval default OR an IDENTITY).
+			if isImplicitOwnedSequence(ls, d) {
+				continue
+			}
 			out = append(out, change{kind: plan.ChangeDropSequence, seq: ls, dropSeq: k})
 		}
 	}
 	return out
+}
+
+// isImplicitOwnedSequence reports whether a live sequence is a serial/bigserial
+// helper that the user can't reasonably be expected to declare in source. Heuristic:
+// the sequence is OwnedBy schema.table.column AND the desired table has that column
+// as IDENTITY or with a nextval(...) default referencing this sequence.
+func isImplicitOwnedSequence(ls *schema.Sequence, d *schema.SchemaState) bool {
+	if ls == nil || ls.OwnedBy == "" || d == nil {
+		return false
+	}
+	// OwnedBy is "schema.table.column"; split.
+	parts := strings.Split(ls.OwnedBy, ".")
+	if len(parts) < 3 {
+		return false
+	}
+	sch, tbl, col := parts[0], parts[1], parts[2]
+	t := d.Tables[schema.TableKey(sch, tbl)]
+	if t == nil {
+		return false
+	}
+	for _, c := range t.Columns {
+		if c == nil || c.Name != col {
+			continue
+		}
+		if c.Identity != "" {
+			return true
+		}
+		if strings.HasPrefix(strings.ToLower(c.DefaultSQL), "nextval(") {
+			return true
+		}
+		// bigserial/serial pseudo-types: the parser preserves the type as-is in TypeSQL,
+		// so a column declared `bigserial` keeps that text and PG auto-creates the sequence.
+		ts := strings.ToLower(c.TypeSQL)
+		if ts == "serial" || ts == "bigserial" || ts == "smallserial" {
+			return true
+		}
+	}
+	return false
 }
 
 func diffTriggers(d, l *schema.SchemaState) []change {

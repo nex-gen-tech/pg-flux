@@ -49,12 +49,24 @@ func captureCreateStatistics(s *pgq.CreateStatsStmt, st *schema.SchemaState) err
 		}
 	}
 	sort.Strings(stat.Kinds)
-	// Columns / expressions — exprs is a list of StatsElem
+	// Columns / expressions — exprs is a list of StatsElem nodes. Each can be either:
+	//   - a bare column name (StatsElem.name set), OR
+	//   - a parenthesised expression (StatsElem.expr set).
 	for _, e := range s.GetExprs() {
-		// pg_query encodes both column refs and full expressions inside StatsElem;
-		// for simplicity we deparse each node back to SQL text.
-		if expr, err := deparseExprToSQL(e); err == nil && strings.TrimSpace(expr) != "" {
-			stat.Columns = append(stat.Columns, strings.TrimSpace(expr))
+		se := e.GetStatsElem()
+		if se == nil {
+			// Fallback: try deparsing as a raw expression.
+			if expr, err := deparseExprToSQL(e); err == nil && strings.TrimSpace(expr) != "" {
+				stat.Columns = append(stat.Columns, strings.TrimSpace(expr))
+			}
+			continue
+		}
+		if name := strings.TrimSpace(se.GetName()); name != "" {
+			stat.Columns = append(stat.Columns, name)
+			continue
+		}
+		if expr, err := deparseExprToSQL(se.GetExpr()); err == nil && strings.TrimSpace(expr) != "" {
+			stat.Columns = append(stat.Columns, "("+strings.TrimSpace(expr)+")")
 		}
 	}
 	st.Statistics[schema.StatisticsKey(stat.Schema, stat.Name)] = stat

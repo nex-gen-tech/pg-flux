@@ -17,7 +17,7 @@ func diffPrivileges(d, l *schema.SchemaState) []change {
 	if d == nil || l == nil {
 		return out
 	}
-	emitObj := func(objType, qualName string, desired, live []schema.Privilege) {
+	emitObj := func(objType, qualName, owner string, desired, live []schema.Privilege) {
 		// Honour the declarative opt-in: a fully-empty desired Privileges slice
 		// means "don't manage permissions on this object."
 		if len(desired) == 0 {
@@ -25,6 +25,11 @@ func diffPrivileges(d, l *schema.SchemaState) []change {
 		}
 		grants, revokes := schema.DiffPrivileges(desired, live)
 		for _, p := range revokes {
+			// Never REVOKE from the object's owner — owner privileges are implicit and
+			// re-grant themselves; revoking them spuriously breaks future GRANTs.
+			if owner != "" && strings.EqualFold(p.Grantee, owner) {
+				continue
+			}
 			out = append(out, change{
 				kind:   plan.ChangeRawSQL,
 				rawSQL: renderRevoke(objType, qualName, p),
@@ -45,10 +50,12 @@ func diffPrivileges(d, l *schema.SchemaState) []change {
 		}
 		live := l.Tables[k]
 		var lp []schema.Privilege
+		var owner string
 		if live != nil {
 			lp = live.Privileges
+			owner = live.Owner
 		}
-		emitObj("TABLE", ident(t.Schema)+"."+ident(t.Name), t.Privileges, lp)
+		emitObj("TABLE", ident(t.Schema)+"."+ident(t.Name), owner, t.Privileges, lp)
 	}
 	for k, v := range d.Views {
 		if v == nil {
@@ -56,15 +63,13 @@ func diffPrivileges(d, l *schema.SchemaState) []change {
 		}
 		live := l.Views[k]
 		var lp []schema.Privilege
+		var owner string
 		if live != nil {
 			lp = live.Privileges
+			owner = live.Owner
 		}
-		kw := "TABLE"
-		if v.Materialized {
-			// PG GRANT syntax has no MATERIALIZED VIEW kind — use TABLE.
-			kw = "TABLE"
-		}
-		emitObj(kw, ident(v.Schema)+"."+ident(v.Name), v.Privileges, lp)
+		// PG GRANT syntax has no separate MATERIALIZED VIEW kind — both use TABLE.
+		emitObj("TABLE", ident(v.Schema)+"."+ident(v.Name), owner, v.Privileges, lp)
 	}
 	for k, s := range d.Sequences {
 		if s == nil {
@@ -72,10 +77,12 @@ func diffPrivileges(d, l *schema.SchemaState) []change {
 		}
 		live := l.Sequences[k]
 		var lp []schema.Privilege
+		var owner string
 		if live != nil {
 			lp = live.Privileges
+			owner = live.Owner
 		}
-		emitObj("SEQUENCE", ident(s.Schema)+"."+ident(s.Name), s.Privileges, lp)
+		emitObj("SEQUENCE", ident(s.Schema)+"."+ident(s.Name), owner, s.Privileges, lp)
 	}
 	for k, f := range d.Functions {
 		if f == nil {
@@ -83,15 +90,17 @@ func diffPrivileges(d, l *schema.SchemaState) []change {
 		}
 		live := l.Functions[k]
 		var lp []schema.Privilege
+		var owner string
 		if live != nil {
 			lp = live.Privileges
+			owner = live.Owner
 		}
 		kw := "FUNCTION"
 		switch f.Kind {
 		case "p":
 			kw = "PROCEDURE"
 		}
-		emitObj(kw, f.Identity, f.Privileges, lp)
+		emitObj(kw, f.Identity, owner, f.Privileges, lp)
 	}
 	return out
 }

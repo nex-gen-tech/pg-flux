@@ -39,7 +39,32 @@ func captureView(v *pgq.ViewStmt, raw *pgq.RawStmt, st *schema.SchemaState) erro
 	if st.Views[k] != nil {
 		return fmt.Errorf("duplicate view %q", k)
 	}
-	st.Views[k] = &schema.View{Schema: sch, Name: name, DefSQL: sql, Materialized: false}
+	view := &schema.View{Schema: sch, Name: name, DefSQL: sql, Materialized: false}
+	// WITH (check_option = local, security_barrier = true, security_invoker = true)
+	for _, opt := range v.GetOptions() {
+		el := opt.GetDefElem()
+		if el == nil {
+			continue
+		}
+		val := defElemValueToString(el.GetArg())
+		switch strings.ToLower(el.GetDefname()) {
+		case "check_option":
+			view.CheckOption = strings.ToLower(val)
+		case "security_barrier":
+			view.SecurityBarrier = strings.EqualFold(val, "true")
+		case "security_invoker":
+			view.SecurityInvoker = strings.EqualFold(val, "true")
+		}
+	}
+	// PG accepts WITH [CASCADED|LOCAL] CHECK OPTION as a trailing clause encoded as
+	// ViewStmt.WithCheckOption rather than an options DefElem. Map both.
+	switch v.GetWithCheckOption() {
+	case pgq.ViewCheckOption_LOCAL_CHECK_OPTION:
+		view.CheckOption = "local"
+	case pgq.ViewCheckOption_CASCADED_CHECK_OPTION:
+		view.CheckOption = "cascaded"
+	}
+	st.Views[k] = view
 	return nil
 }
 
