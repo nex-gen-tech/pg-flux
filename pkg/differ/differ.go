@@ -173,6 +173,7 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 	changes = append(changes, diffExtraDDL(desired, live)...)
 	changes = append(changes, diffMiscObjects(desired)...)
 	changes = append(changes, diffComments(desired, live)...)
+	changes = append(changes, diffOwners(desired, live)...)
 	changes = injectViewRefreshForTypeChanges(changes, desired, live)
 	sortChangesDeterministic(desired, changes)
 	stmts := buildStatements(changes, desired, live, opt)

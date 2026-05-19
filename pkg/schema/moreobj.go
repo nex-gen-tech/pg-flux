@@ -33,12 +33,14 @@ type View struct {
 	DefSQL       string
 	Materialized bool
 	Comment      string
+	Owner        string
 }
 
 // Sequence is a free-standing sequence.
 type Sequence struct {
 	Schema, Name, DefSQL string
 	Comment              string
+	Owner                string
 }
 
 // Trigger is a non-internal trigger.

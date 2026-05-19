@@ -24,6 +24,7 @@ type Function struct {
 	Fingerprint string
 	Identity    string // schema.name(args) for map key
 	Comment     string
+	Owner       string
 }
 
 // Policy is a row-level security policy.

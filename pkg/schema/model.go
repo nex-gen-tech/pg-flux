@@ -80,6 +80,7 @@ type Table struct {
 	RLSEnabled     bool
 	RLSForced      bool
 	Comment        string
+	Owner          string
 	PrimaryKeyCols []string
 	// PartitionBy holds the partition strategy and key (e.g. "RANGE (ts)") for
 	// partitioned tables. Empty for regular tables.

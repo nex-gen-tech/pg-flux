@@ -171,6 +171,10 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	if err := loadComments(ctx, pool, st, schemas); err != nil {
 		return nil, err
 	}
+	// Annotate every loaded object with its pg_class.relowner / pg_proc.proowner role.
+	if err := loadOwners(ctx, pool, st, schemas); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 
