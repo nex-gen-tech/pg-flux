@@ -38,12 +38,12 @@ var createOrder = map[string]int{
 	"ADD_TABLE_CONSTRAINT":      6,
 	"RENAME_TABLE_CONSTRAINT":   3, // run before ADD/DROP so dependent rewrites use the right name
 	"CREATE_SEQUENCE":           5,
+	"DROP_TRIGGER":              13, // must run BEFORE CREATE_TRIGGER for replace-by-name
 	"CREATE_TRIGGER":            14,
 	"CREATE_MATERIALIZED_VIEW":  35,
 	"DROP_VIEW":                 16,
 	"DROP_VIEW_EARLY":           3, // DROP VIEW injected to unblock ALTER COLUMN TYPE
 	"DROP_SEQUENCE":             4,
-	"DROP_TRIGGER":              15,
 	"DROP_TABLE_CONSTRAINT":     4,
 }
 
