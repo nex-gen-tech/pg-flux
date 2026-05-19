@@ -85,6 +85,9 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 	// CREATE EVENT TRIGGER — database-wide DDL trigger.
 	case *pgq.Node_CreateEventTrigStmt:
 		return captureCreateEventTrigger(n.CreateEventTrigStmt, st)
+	// CREATE STATISTICS — extended planner stats.
+	case *pgq.Node_CreateStatsStmt:
+		return captureCreateStatistics(n.CreateStatsStmt, st)
 	default:
 		return nil
 	}

@@ -49,6 +49,8 @@ type SchemaState struct {
 	DefaultPrivileges []*DefaultPrivilege
 	// EventTriggers (pg_event_trigger). Database-wide DDL/login triggers.
 	EventTriggers map[string]*EventTrigger
+	// Statistics (pg_statistic_ext) — extended planner statistics.
+	Statistics map[string]*Statistics
 }
 
 // RLSFlags carries pending RLS enable/force flags for a table.

@@ -79,6 +79,24 @@ type Sequence struct {
 type Trigger struct {
 	Schema, Table, Name, DefSQL string
 	Comment                     string
+	// IsConstraint marks pg_trigger.tgconstraint != 0 — a CONSTRAINT TRIGGER
+	// (used for deferred FK / unique enforcement).
+	IsConstraint bool
+}
+
+// Statistics models a CREATE STATISTICS object (pg_statistic_ext).
+//
+//	CREATE STATISTICS [name] (kinds...) ON exprs FROM relation
+//
+// Kinds is the subset of {ndistinct, dependencies, mcv} declared in the statement.
+type Statistics struct {
+	Schema, Name string
+	TableSchema  string
+	TableName    string
+	Kinds        []string // sorted, lowercase
+	Columns      []string // simple column names OR full expression text
+	Comment      string
+	Owner        string
 }
 
 // EventTrigger is a database-wide DDL/login event trigger (pg_event_trigger).
@@ -118,4 +136,12 @@ func TriggerKey(sch, tbl, tg string) string {
 		sch = "public"
 	}
 	return TableKey(sch, tbl) + "/" + strings.ToLower(tg)
+}
+
+// StatisticsKey is schema.name (extended statistics live in pg_statistic_ext).
+func StatisticsKey(sch, name string) string {
+	if sch == "" {
+		sch = "public"
+	}
+	return sch + "." + strings.ToLower(name)
 }

@@ -187,6 +187,10 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	if err := loadEventTriggers(ctx, pool, st); err != nil {
 		return nil, err
 	}
+	// Extended statistics (pg_statistic_ext) per schema.
+	if err := loadStatistics(ctx, pool, st, schemas); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 
