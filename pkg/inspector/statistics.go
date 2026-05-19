@@ -50,15 +50,17 @@ func loadStatistics(ctx context.Context, pool *pgxpool.Pool, st *schema.SchemaSt
 			TableSchema: strings.ToLower(tblSch),
 			TableName:   strings.ToLower(tblName),
 		}
+		// pg_statistic_ext.stxkind one-char codes (per src/include/catalog/pg_statistic_ext.h):
+		//   d → ndistinct, f → functional-dependencies, m → mcv, e → expressions
 		kindKeywords := make([]string, 0, len(kinds))
 		for _, k := range kinds {
 			switch k {
 			case "d":
-				kindKeywords = append(kindKeywords, "dependencies")
-			case "f", "m":
-				kindKeywords = append(kindKeywords, "mcv")
-			case "n":
 				kindKeywords = append(kindKeywords, "ndistinct")
+			case "f":
+				kindKeywords = append(kindKeywords, "dependencies")
+			case "m":
+				kindKeywords = append(kindKeywords, "mcv")
 			case "e":
 				kindKeywords = append(kindKeywords, "expressions")
 			}

@@ -14,7 +14,8 @@
       "Bash(PGPASSWORD=pgflux psql -h localhost -p 5440 -U pgflux -d pgflux -c \"CREATE DATABASE pgflux_v2;\")",
       "Bash(PGPASSWORD=pgflux psql -h localhost -p 5440 -U pgflux -d pgflux_v2 -c \"CREATE ROLE app_writer NOLOGIN;\")",
       "Bash(grep -v '^$')",
-      "Bash(grep -vE '^\\(Usage|  -|Global|$|Flags\\)')"
+      "Bash(grep -vE '^\\(Usage|  -|Global|$|Flags\\)')",
+      "Bash(grep -vE '^\\(Usage|  -|Global|$|Flags|pg-flux drift| -\\)')"
     ]
   }
 }

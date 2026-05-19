@@ -230,8 +230,30 @@ func createStmtDefFingerprint(s string) string {
 	// SQL which typically omits them (e.g. 'archived'::post_status → 'archived'; or
 	// handle::character varying → handle for generated-column-style coercions).
 	dep = reTypeCastBroad.ReplaceAllString(dep, "")
+	// Strip a CREATE VIEW … WITH (…) options clause. View options are tracked
+	// separately on the View struct (CheckOption / SecurityBarrier / SecurityInvoker)
+	// and diff'd via diffViewAttrs. Removing them from the body fingerprint keeps
+	// pure body comparison clean.
+	dep = reViewWithOptions.ReplaceAllString(dep, " ")
+	// PG15 emits column references as "table.column" inside pg_get_viewdef while
+	// PG16+ omits the redundant qualifier. Strip qualifier prefixes so both forms
+	// fingerprint identically. (Multi-table joins with same column name on both
+	// sides would lose precision here, but views of that shape are uncommon and
+	// users can disambiguate via AS aliases.)
+	dep = reViewColQualifier.ReplaceAllString(dep, "$1")
+	// Trailing semicolon, redundant whitespace.
+	dep = strings.TrimSuffix(strings.TrimSpace(dep), ";")
 	return strings.TrimSpace(reMultiSpace.ReplaceAllString(dep, " "))
 }
+
+// reViewColQualifier strips "tablename." prefixes off column refs in view bodies.
+// Anchored to a leading SELECT-area token boundary so FROM table.column doesn't
+// match.  We use word-then-dot-then-word, capture the trailing column name.
+var reViewColQualifier = regexp.MustCompile(`\b[a-z_][a-z0-9_]*\.([a-z_][a-z0-9_]*)`)
+
+// reViewWithOptions matches a "with (…)" options clause that immediately follows
+// the view name in a CREATE VIEW statement (case-insensitive, single-line).
+var reViewWithOptions = regexp.MustCompile(`(?i)\bwith\s*\([^)]*\)\s*`)
 
 func deparseOneStmt(sql string) (string, bool) {
 	pr, err := pgq.Parse(sql)
@@ -386,15 +408,122 @@ func fnNormType(s string) string {
 var reFnTypeTokens = regexp.MustCompile(`\b(timestamp with time zone|time with time zone|timestamp without time zone|time without time zone|double precision|character varying|bigint|smallint|integer|boolean|varchar|float8|float4|float|real|int8|int4|int2|int|bool|numeric|decimal|timestamptz|timetz)\b`)
 
 func fpFunctionSQL(s string) string {
+	// First pass: round-trip through pg_query Parse+Deparse so both source-side
+	// and pg_get_functiondef strings end up in the SAME canonical form. This
+	// eliminates whitespace, keyword-case, and comment differences.
+	if dep, ok := deparseOneStmt(strings.TrimSpace(s)); ok {
+		s = dep
+	}
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = reDollarDelim.ReplaceAllLiteralString(s, "$$")
 	s = reMultiSpace.ReplaceAllString(s, " ")
 	// Normalize type aliases in the function header (before the function body).
 	// Split on $$ to isolate the header from the body — avoid modifying body literals.
 	parts := strings.SplitN(s, "$$", 2)
-	parts[0] = reFnTypeTokens.ReplaceAllStringFunc(parts[0], fnNormType)
+	header := parts[0]
+	// Strip "security invoker" — it's the default; pg_get_functiondef omits it,
+	// so explicit source mentions cause spurious diffs.
+	header = reSecurityInvoker.ReplaceAllLiteralString(header, " ")
+	// Normalize SET clause: "set k = v" / "set k to v" / "set k = 'v'" → "set k to v"
+	header = reSetClauseOp.ReplaceAllString(header, "set $1 to ")
+	header = reSetClauseQuoted.ReplaceAllString(header, "set $1 to $2")
+	// Normalize type aliases.
+	header = reFnTypeTokens.ReplaceAllStringFunc(header, fnNormType)
+	// Sort the option clauses between the RETURNS clause and the AS $$.
+	header = sortFunctionOptions(header)
+	parts[0] = header
 	s = strings.Join(parts, "$$")
+	s = reMultiSpace.ReplaceAllString(s, " ")
 	return s
+}
+
+var (
+	// reSetClauseOp normalises a SET clause without quoted value:
+	//   "set name = value" / "set name to value" → "set name to value"
+	reSetClauseOp = regexp.MustCompile(`\bset\s+(\w+)\s*(?:=|to)\s*`)
+	// reSetClauseQuoted strips outer single quotes from the SET value:
+	//   "set name to 'value'" → "set name to value"
+	reSetClauseQuoted = regexp.MustCompile(`\bset\s+(\w+)\s+to\s+'([^']*)'`)
+	// reSecurityInvoker matches the explicit SECURITY INVOKER clause (the PG default).
+	reSecurityInvoker = regexp.MustCompile(`\bsecurity\s+invoker\b`)
+	// reFunctionOptionClauses matches the cluster of function-option tokens between
+	// the LANGUAGE clause and the AS $$ delimiter so they can be reordered into
+	// a stable canonical sequence.
+	reFunctionOptionClauses = regexp.MustCompile(`(language\s+\w+)\s+(.*?)\s+as\s*$`)
+)
+
+// sortFunctionOptions canonicalises the cluster of optional clauses appearing
+// between LANGUAGE <lang> and AS $$. pg_get_functiondef orders them in a fixed
+// way; source can declare them in any order. We split on whitespace, group
+// known multi-token clauses (PARALLEL SAFE, etc.), sort, and re-emit.
+func sortFunctionOptions(header string) string {
+	// Find the LANGUAGE clause and the trailing " as " sentinel; rewrite middle.
+	// Use a non-regex anchor to avoid greedy issues with literals in defaults.
+	lower := strings.ToLower(header)
+	lang := strings.Index(lower, "language ")
+	asKw := strings.LastIndex(lower, " as ")
+	if lang < 0 || asKw < 0 || asKw < lang {
+		return header
+	}
+	// Advance past "language <word>"
+	rest := header[lang+len("language "):]
+	space := strings.IndexAny(rest, " \t\n")
+	if space < 0 {
+		return header
+	}
+	langTokenEnd := lang + len("language ") + space
+	mid := header[langTokenEnd:asKw]
+	mid = strings.TrimSpace(mid)
+	if mid == "" {
+		return header
+	}
+	// Tokenize. Group well-known multi-word clauses.
+	tokens := splitFunctionOptions(mid)
+	sort.Strings(tokens)
+	rebuilt := header[:langTokenEnd] + " " + strings.Join(tokens, " ") + header[asKw:]
+	return rebuilt
+}
+
+// splitFunctionOptions splits the option cluster into atomic clauses, grouping
+// known multi-token clauses (PARALLEL SAFE, SECURITY DEFINER, COST n, ROWS n,
+// SET name TO value, NOT LEAKPROOF). Single-word options pass through.
+func splitFunctionOptions(s string) []string {
+	fields := strings.Fields(s)
+	var out []string
+	i := 0
+	for i < len(fields) {
+		w := fields[i]
+		switch w {
+		case "parallel", "security":
+			if i+1 < len(fields) {
+				out = append(out, w+" "+fields[i+1])
+				i += 2
+				continue
+			}
+		case "cost", "rows":
+			if i+1 < len(fields) {
+				out = append(out, w+" "+fields[i+1])
+				i += 2
+				continue
+			}
+		case "not":
+			if i+1 < len(fields) {
+				out = append(out, w+" "+fields[i+1])
+				i += 2
+				continue
+			}
+		case "set":
+			// "set <k> to <v>" — fixed 4-token clause
+			if i+3 < len(fields) && strings.EqualFold(fields[i+2], "to") {
+				out = append(out, strings.Join(fields[i:i+4], " "))
+				i += 4
+				continue
+			}
+		}
+		out = append(out, w)
+		i++
+	}
+	return out
 }
 
 func diffFunctions(d, l *schema.SchemaState) []change {

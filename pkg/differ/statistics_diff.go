@@ -89,9 +89,23 @@ func statisticsEqual(a, b *schema.Statistics) bool {
 	if !stringSliceEq(ak, bk) {
 		return false
 	}
-	// Column lists are order-sensitive in PG (statistics object stores them in order),
-	// so compare as-is.
-	return stringSliceEq(a.Columns, b.Columns)
+	// Column lists: PG's pg_get_statisticsobjdef_columns may return them in attnum
+	// order regardless of the original CREATE STATISTICS order, and the planner
+	// gathers all prefix combinations regardless of declared order. Compare as a
+	// case-insensitive multiset.
+	ac := normalizeStatColumns(a.Columns)
+	bc := normalizeStatColumns(b.Columns)
+	return stringSliceEq(ac, bc)
+}
+
+// normalizeStatColumns lowercases and sorts the column list for order-insensitive comparison.
+func normalizeStatColumns(cols []string) []string {
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = strings.ToLower(strings.TrimSpace(c))
+	}
+	sort.Strings(out)
+	return out
 }
 
 func stringSliceEq(a, b []string) bool {
