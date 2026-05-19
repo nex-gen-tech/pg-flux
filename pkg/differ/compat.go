@@ -20,15 +20,12 @@ func checkServerCompat(desired *schema.SchemaState, srv pgver.Version) error {
 	}
 	// Each registered checker returns true if the desired state uses the feature.
 	checks := []struct {
-		feat   pgver.Feature
-		inUse  func(*schema.SchemaState) bool
+		feat  pgver.Feature
+		inUse func(*schema.SchemaState) bool
 	}{
-		// Registrations land here as features become tracked in the schema model.
-		// Example shape (added in P3.2):
-		//   {pgver.FeatureVirtualGenerated, anyVirtualGeneratedColumn},
-		//   {pgver.FeatureNullsNotDistinct,  anyNullsNotDistinctConstraint},
-		//   {pgver.FeatureNotEnforced,       anyNotEnforcedConstraint},
-		//   {pgver.FeatureWithoutOverlaps,   anyTemporalConstraint},
+		{pgver.FeatureVirtualGenerated, hasVirtualGeneratedColumn},
+		{pgver.FeatureNotEnforced, hasNotEnforcedConstraint},
+		{pgver.FeatureNullsNotDistinct, hasNullsNotDistinctUnique},
 	}
 	for _, c := range checks {
 		if c.inUse != nil && c.inUse(desired) {
@@ -38,4 +35,60 @@ func checkServerCompat(desired *schema.SchemaState, srv pgver.Version) error {
 		}
 	}
 	return nil
+}
+
+func hasVirtualGeneratedColumn(s *schema.SchemaState) bool {
+	if s == nil {
+		return false
+	}
+	for _, t := range s.Tables {
+		if t == nil {
+			continue
+		}
+		for _, c := range t.Columns {
+			if c != nil && c.GeneratedKind == "virtual" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasNotEnforcedConstraint(s *schema.SchemaState) bool {
+	if s == nil {
+		return false
+	}
+	for _, t := range s.Tables {
+		if t == nil {
+			continue
+		}
+		for _, c := range t.Checks {
+			if c != nil && c.NotEnforced {
+				return true
+			}
+		}
+		for _, fk := range t.ForeignKeys {
+			if fk != nil && fk.NotEnforced {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasNullsNotDistinctUnique(s *schema.SchemaState) bool {
+	if s == nil {
+		return false
+	}
+	for _, t := range s.Tables {
+		if t == nil {
+			continue
+		}
+		for _, u := range t.Uniques {
+			if u != nil && u.NullsNotDistinct {
+				return true
+			}
+		}
+	}
+	return false
 }

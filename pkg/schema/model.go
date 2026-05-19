@@ -111,9 +111,12 @@ type Column struct {
 	// IdentitySequenceOptions holds the literal "(START 100 INCREMENT 5 ...)" body when the
 	// source specifies sequence options on the identity. Empty when not specified.
 	IdentitySequenceOptions string
-	// GeneratedExpr is non-empty for stored generated columns:
-	// the expression text (without GENERATED ALWAYS AS and STORED wrapper).
+	// GeneratedExpr is non-empty for generated columns (stored or virtual):
+	// the expression text (without GENERATED ALWAYS AS / STORED|VIRTUAL wrapper).
 	GeneratedExpr string
+	// GeneratedKind is "stored" (PG12+), "virtual" (PG18+), or "" when not generated.
+	// Maps to pg_attribute.attgenerated ('s' / 'v' / '').
+	GeneratedKind string
 	// CustomUsing holds the USING expression override for ALTER COLUMN TYPE, provided via
 	// a "-- @using <expr>" comment immediately preceding the column definition. When set,
 	// this expression replaces the default "col::newtype" USING clause so incompatible

@@ -38,10 +38,14 @@ func fillColumns(ctx context.Context, pool *pgxpool.Pool, tableOID uint32, t *sc
 			TypeSQL: typ,
 			NotNull: notnull,
 		}
-		if attgenerated == "s" {
-			// Stored generated column: the catalog stores the expression in pg_attrdef.
+		switch attgenerated {
+		case "s":
 			c.GeneratedExpr = strings.TrimSpace(def)
-		} else {
+			c.GeneratedKind = "stored"
+		case "v":
+			c.GeneratedExpr = strings.TrimSpace(def)
+			c.GeneratedKind = "virtual"
+		default:
 			c.DefaultSQL = strings.TrimSpace(def)
 		}
 		switch attidentity {

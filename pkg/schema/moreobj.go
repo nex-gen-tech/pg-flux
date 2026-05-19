@@ -8,6 +8,8 @@ type TableCheck struct {
 	DefSQL            string // "CHECK (expr)" style fragment comparable to pg_get_constraintdef
 	Deferrable        bool
 	InitiallyDeferred bool
+	// NotEnforced: PG18+ NOT ENFORCED clause on CHECK constraints.
+	NotEnforced bool
 }
 
 // TableForeignKey is a table-level foreign key (contype f in pg_constraint).
@@ -18,6 +20,8 @@ type TableForeignKey struct {
 	InitiallyDeferred bool
 	// MatchType is "" (default SIMPLE), "FULL", or "PARTIAL". From pg_constraint.confmatchtype.
 	MatchType string
+	// NotEnforced: PG18+ NOT ENFORCED clause on CHECK / FK; from pg_constraint.conenforced.
+	NotEnforced bool
 }
 
 // TableUnique is a named UNIQUE table constraint (contype u; may include NULLS NOT DISTINCT).

@@ -911,7 +911,11 @@ func createTableSQL(t *schema.Table) string {
 		}
 		fmt.Fprintf(&b, "  %s %s", ident(c.Name), c.TypeSQL)
 		if c.GeneratedExpr != "" {
-			fmt.Fprintf(&b, " GENERATED ALWAYS AS (%s) STORED", c.GeneratedExpr)
+			kind := "STORED"
+			if c.GeneratedKind == "virtual" {
+				kind = "VIRTUAL"
+			}
+			fmt.Fprintf(&b, " GENERATED ALWAYS AS (%s) %s", c.GeneratedExpr, kind)
 		} else if c.Identity != "" {
 			fmt.Fprintf(&b, " GENERATED %s AS IDENTITY", identityClause(c.Identity))
 			if c.IdentitySequenceOptions != "" {
