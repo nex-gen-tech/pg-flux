@@ -130,21 +130,14 @@ func loadViewsMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (ma
 		SELECT
 			n.nspname,
 			c.relname,
-			false,
-			'CREATE VIEW ' || format('%I.%I', n.nspname, c.relname) || ' AS ' || pg_get_viewdef(c.oid, true)
+			c.relkind = 'm' AS is_mat,
+			'CREATE ' || CASE WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' ELSE 'VIEW ' END ||
+				format('%I.%I', n.nspname, c.relname) || ' AS ' || pg_get_viewdef(c.oid, true) AS def,
+			COALESCE(c.reloptions, ARRAY[]::text[]) AS reloptions
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE c.relkind = 'v' AND n.nspname = ANY($1)
-		UNION ALL
-		SELECT
-			n.nspname,
-			c.relname,
-			true,
-			'CREATE MATERIALIZED VIEW ' || format('%I.%I', n.nspname, c.relname) || ' AS ' || pg_get_viewdef(c.oid, true)
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE c.relkind = 'm' AND n.nspname = ANY($1)
-		ORDER BY 1,2
+		WHERE c.relkind IN ('v', 'm') AND n.nspname = ANY($1)
+		ORDER BY n.nspname, c.relname
 	`, schemas)
 	if err != nil {
 		return nil, err
@@ -154,13 +147,31 @@ func loadViewsMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (ma
 	for rows.Next() {
 		var nsp, vname, def string
 		var mat bool
-		if err := rows.Scan(&nsp, &vname, &mat, &def); err != nil {
+		var reloptions []string
+		if err := rows.Scan(&nsp, &vname, &mat, &def, &reloptions); err != nil {
 			return nil, err
 		}
 		nsp = strings.ToLower(nsp)
 		vname = strings.ToLower(vname)
 		k := schema.ViewKey(nsp, vname)
-		out[k] = &schema.View{Schema: nsp, Name: vname, DefSQL: def, Materialized: mat}
+		v := &schema.View{Schema: nsp, Name: vname, DefSQL: def, Materialized: mat}
+		for _, kv := range reloptions {
+			i := strings.IndexByte(kv, '=')
+			if i <= 0 {
+				continue
+			}
+			key := strings.ToLower(strings.TrimSpace(kv[:i]))
+			val := strings.TrimSpace(kv[i+1:])
+			switch key {
+			case "check_option":
+				v.CheckOption = strings.ToLower(val)
+			case "security_barrier":
+				v.SecurityBarrier = strings.EqualFold(val, "true")
+			case "security_invoker":
+				v.SecurityInvoker = strings.EqualFold(val, "true")
+			}
+		}
+		out[k] = v
 	}
 	return out, rows.Err()
 }

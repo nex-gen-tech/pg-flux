@@ -50,6 +50,12 @@ type View struct {
 	Materialized bool
 	Comment      string
 	Owner        string
+	// CheckOption is "" (none), "local", or "cascaded" — from pg_class.reloptions[check_option].
+	CheckOption string
+	// SecurityBarrier mirrors the security_barrier reloption.
+	SecurityBarrier bool
+	// SecurityInvoker is the PG15+ security_invoker reloption (run-as-invoker views).
+	SecurityInvoker bool
 }
 
 // Sequence is a free-standing sequence.

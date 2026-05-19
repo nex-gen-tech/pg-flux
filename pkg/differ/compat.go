@@ -20,7 +20,7 @@ func checkServerCompat(desired *schema.SchemaState, srv pgver.Version) error {
 	if desired == nil || srv == (pgver.Version{}) {
 		return nil
 	}
-	// Each registered checker returns true if the desired state uses the feature.
+	// Builtin checkers; additional features can register via registerCompat (init blocks).
 	checks := []struct {
 		feat  pgver.Feature
 		inUse func(*schema.SchemaState) bool
@@ -30,6 +30,7 @@ func checkServerCompat(desired *schema.SchemaState, srv pgver.Version) error {
 		{pgver.FeatureNullsNotDistinct, hasNullsNotDistinctUnique},
 		{pgver.FeatureLZ4Compression, hasLZ4CompressionColumn},
 	}
+	checks = append(checks, dynamicCompatChecks...)
 	for _, c := range checks {
 		if c.inUse != nil && c.inUse(desired) {
 			if err := srv.Require(c.feat); err != nil {
@@ -77,6 +78,20 @@ func hasNotEnforcedConstraint(s *schema.SchemaState) bool {
 		}
 	}
 	return false
+}
+
+// dynamicCompatChecks holds checkers registered from init() blocks in other files
+// (e.g. view security_invoker registered from view_attrs.go).
+var dynamicCompatChecks []struct {
+	feat  pgver.Feature
+	inUse func(*schema.SchemaState) bool
+}
+
+func registerCompat(feat pgver.Feature, inUse func(*schema.SchemaState) bool) {
+	dynamicCompatChecks = append(dynamicCompatChecks, struct {
+		feat  pgver.Feature
+		inUse func(*schema.SchemaState) bool
+	}{feat, inUse})
 }
 
 func hasLZ4CompressionColumn(s *schema.SchemaState) bool {
