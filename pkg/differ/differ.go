@@ -956,6 +956,18 @@ func createTableSQL(t *schema.Table) string {
 	return ddl
 }
 
+// CreateTableSQL is the exported wrapper used by pkg/dump to render a Table back
+// into source SQL. Returns (CREATE TABLE statement, optional post-create ALTER
+// COLUMN SET STORAGE statements when pgv < 16). Pass pgver.Version{Major:999}
+// when targeting source files (which can assume the latest PG syntax).
+func CreateTableSQL(t *schema.Table, pgv pgver.Version) (string, []string) {
+	return createTableSQL2(t, pgv)
+}
+
+// Ident wraps the package-internal ident() so external renderers (e.g. pkg/dump)
+// produce identifiers with the same quoting rules the differ uses.
+func Ident(s string) string { return ident(s) }
+
 // createTableSQL2 returns the CREATE TABLE DDL plus a list of follow-up ALTER
 // COLUMN SET STORAGE statements when the target PG version is below 16 (the
 // version where inline STORAGE in CREATE TABLE became valid). On PG16+ the
@@ -1004,7 +1016,10 @@ func createTableSQL2(t *schema.Table, pgv pgver.Version) (string, []string) {
 		} else if c.DefaultSQL != "" {
 			fmt.Fprintf(&b, " DEFAULT %s", c.DefaultSQL)
 		}
-		if c.IsPrimaryKey {
+		// Single-column PK emitted inline ONLY when the table-level PrimaryKeyCols
+		// is empty. The inspector populates both fields for single-column PKs;
+		// emitting both produces invalid "two primary keys" CREATE TABLE.
+		if c.IsPrimaryKey && len(t.PrimaryKeyCols) == 0 {
 			b.WriteString(" PRIMARY KEY")
 		} else if c.NotNull && c.Identity == "" {
 			// IDENTITY implies NOT NULL — don't double-emit.

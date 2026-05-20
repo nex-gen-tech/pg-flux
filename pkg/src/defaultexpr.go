@@ -53,23 +53,28 @@ func tryQuickExprString(n *pgq.Node) string {
 			}
 		}
 		b.WriteString("(")
+		// If ANY argument is something we can't quickly render, bail out and let
+		// the full deparser handle the entire expression. Silently dropping an
+		// argument produces buggy output like nextval() with empty parens —
+		// previously a real round-trip failure on serial-style defaults.
 		for i, arg := range fn.GetArgs() {
 			if i > 0 {
 				b.WriteString(", ")
 			}
 			if arg == nil {
-				continue
+				return "NULL" // bail to deparser
 			}
-			// Reconstruct minimal node for const/func
 			inner := &pgq.Node{}
-			if ac := arg.GetAConst(); ac != nil {
-				inner.Node = &pgq.Node_AConst{AConst: ac}
+			switch {
+			case arg.GetAConst() != nil:
+				inner.Node = &pgq.Node_AConst{AConst: arg.GetAConst()}
 				b.WriteString(tryQuickExprString(inner))
-				continue
-			}
-			if sub := arg.GetFuncCall(); sub != nil {
-				inner.Node = &pgq.Node_FuncCall{FuncCall: sub}
+			case arg.GetFuncCall() != nil:
+				inner.Node = &pgq.Node_FuncCall{FuncCall: arg.GetFuncCall()}
 				b.WriteString(tryQuickExprString(inner))
+			default:
+				// TypeCast, ColumnRef, etc. — let the full deparser handle it.
+				return "NULL"
 			}
 		}
 		b.WriteString(")")

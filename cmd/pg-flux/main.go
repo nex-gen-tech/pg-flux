@@ -16,6 +16,7 @@ import (
 
 	"github.com/nexg/pg-flux/pkg/db"
 	"github.com/nexg/pg-flux/pkg/differ"
+	"github.com/nexg/pg-flux/pkg/dump"
 	"github.com/nexg/pg-flux/pkg/exec"
 	"github.com/nexg/pg-flux/pkg/hashstate"
 	"github.com/nexg/pg-flux/pkg/inspector"
@@ -146,7 +147,7 @@ func newRoot() *cobra.Command {
 		}
 		return nil
 	}
-	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdVersion())
+	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdDump(), cmdVerify(), cmdPull(), cmdVersion())
 	return r
 }
 
@@ -267,6 +268,133 @@ func cmdVersion() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "pg-flux %s\n", Version)
 		},
 	}
+}
+
+// cmdDump extracts a live PostgreSQL DB's catalog state back into pg-flux
+// source SQL files. The output is round-trip clean: running `pg-flux migrate
+// generate` immediately after produces no changes.
+func cmdDump() *cobra.Command {
+	var (
+		outDir string
+		layout string
+		force  bool
+	)
+	c := &cobra.Command{
+		Use:   "dump",
+		Short: "Extract live schema into pg-flux source SQL files",
+		Long: "Inspect the live database and write one file per object into the\n" +
+			"output directory using a declarative layout. Use this to bootstrap a\n" +
+			"new pg-flux project against an existing database.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			res, err := dump.Dump(ctx, pool, dump.Options{
+				OutputDir: outDir,
+				Layout:    dump.Layout(layout),
+				Schemas:   parseSchemas(),
+				Force:     force,
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"Dumped %d objects to %s (%d files, layout=%s)\n",
+				res.Objects, outDir, res.FilesWritten, res.Layout)
+			return nil
+		},
+	}
+	c.Flags().StringVar(&outDir, "output", "./schema", "destination directory for dumped source files")
+	c.Flags().StringVar(&layout, "layout", "per-kind", "file layout: per-kind (default; one file per object under tables/, views/, ...) or flat (single schema.sql)")
+	c.Flags().BoolVar(&force, "force", false, "overwrite the output directory even if it is not empty")
+	return c
+}
+
+// cmdVerify is the read-only inverse of dump: list catalog objects that exist
+// in the live DB but are not declared in source. Exits 0 by default; --strict
+// makes it exit 1 when anything is found (suitable as a CI gate).
+func cmdVerify() *cobra.Command {
+	var strict bool
+	c := &cobra.Command{
+		Use:   "verify",
+		Short: "List live objects not declared in source (audit gate)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			des, err := loadDesired()
+			if err != nil {
+				return err
+			}
+			live, err := inspector.Inspect(ctx, pool, inspector.Options{Schemas: parseSchemas()})
+			if err != nil {
+				return err
+			}
+			report := dump.Verify(des, live)
+			report.WriteText(cmd.OutOrStdout())
+			if strict && report.Count() > 0 {
+				return fmt.Errorf("verify: %d undeclared object(s)", report.Count())
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&strict, "strict", false, "exit 1 when any undeclared live object is found")
+	return c
+}
+
+// cmdPull writes a quarantine SQL file containing CREATE statements for live
+// objects not declared in source. Source files are never modified — the user
+// reviews and moves objects manually.
+func cmdPull() *cobra.Command {
+	var (
+		dry  bool
+		out  string
+	)
+	c := &cobra.Command{
+		Use:   "pull",
+		Short: "Capture live objects missing from source into schema/_pulled/<ts>.sql",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			des, err := loadDesired()
+			if err != nil {
+				return err
+			}
+			live, err := inspector.Inspect(ctx, pool, inspector.Options{Schemas: parseSchemas()})
+			if err != nil {
+				return err
+			}
+			res, err := dump.Pull(des, live, dump.PullOptions{
+				DryRun:    dry,
+				OutputDir: out,
+			})
+			if err != nil {
+				return err
+			}
+			if dry {
+				fmt.Fprintf(cmd.OutOrStdout(), "Would write %d object(s):\n%s", res.ObjectCount, res.SQL)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d object(s) to %s\n", res.ObjectCount, res.Filename)
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&dry, "dry-run", true, "print the would-be quarantine SQL instead of writing it")
+	c.Flags().StringVar(&out, "output", "./schema/_pulled", "directory for the quarantine .sql files; created if missing")
+	return c
 }
 
 func cmdMigrateGenerate() *cobra.Command {
