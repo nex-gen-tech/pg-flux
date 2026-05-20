@@ -42,6 +42,8 @@ var (
 	appendValidateF  bool
 	reltupleThresh   float64
 	autoNotValidF    bool
+	allowMassDrop    bool
+	massDropThreshold float64
 	shadowDSN        string
 	shadowSemanticF  bool
 	shadowEquivF     bool
@@ -104,6 +106,8 @@ func newRoot() *cobra.Command {
 	r.PersistentFlags().BoolVar(&appendValidateF, "append-validate-not-valid", false, "emit synthetic VALIDATE CONSTRAINT after ADD ... NOT VALID (user-written)")
 	r.PersistentFlags().BoolVar(&autoNotValidF, "auto-not-valid", true, "auto-rewrite ADD CONSTRAINT CHECK/FK to NOT VALID + VALIDATE (PRD P3-14; default on)")
 	r.PersistentFlags().Float64Var(&reltupleThresh, "set-not-null-reltuple-hint", 10000, "rows above which SET NOT NULL is rewritten to the 4-step safe pattern (PRD P3-15; 0 disables)")
+	r.PersistentFlags().BoolVar(&allowMassDrop, "allow-mass-drop", false, "permit migrations that drop >25% of live tables/views/sequences (guards against an empty --schema wiping a non-empty DB)")
+	r.PersistentFlags().Float64Var(&massDropThreshold, "mass-drop-threshold", 25, "percentage of live objects above which mass-drop guard trips; ignored with --allow-mass-drop")
 	r.PersistentFlags().StringVar(&shadowDSN, "shadow-dsn", os.Getenv("PGFLUX_SHADOW_DSN"), "optional disposable DB DSN for shadow validation (see --shadow-semantic, --shadow-equivalence)")
 	r.PersistentFlags().BoolVar(&shadowSemanticF, "shadow-semantic", false, "if set with --shadow-dsn, apply the plan with autocommit on that DB (mutates DB — use disposable instance; stronger than rolled-back syntax check)")
 	r.PersistentFlags().BoolVar(&shadowEquivF, "shadow-equivalence", false, "with --shadow-dsn, run semantic apply on an empty shadow DB then require inspected catalog to match desired (structural check; not a formal proof vs production)")
@@ -671,8 +675,10 @@ func runDiff() (*differ.DiffResult, error) {
 func differOptionsFromFlags() differ.Options {
 	return differ.Options{
 		AppendValidateAfterNotValid: appendValidateF,
-		AutoConstraintNotValid:     autoNotValidF,
+		AutoConstraintNotValid:      autoNotValidF,
 		SetNotNullReltupleThreshold: reltupleThresh,
+		AllowMassDrop:               allowMassDrop,
+		MassDropThresholdPct:        massDropThreshold,
 	}
 }
 

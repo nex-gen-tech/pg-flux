@@ -10,10 +10,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nexg/pg-flux/pkg/differ"
+	"github.com/nexg/pg-flux/pkg/hashstate"
 	"github.com/nexg/pg-flux/pkg/inspector"
 	"github.com/nexg/pg-flux/pkg/plan"
 	"github.com/nexg/pg-flux/pkg/schema"
 )
+
+// BaselineHashHeader is the comment marker embedded in each generated migration
+// recording the live-DB hash at generate time. Apply compares it against the
+// current live hash and refuses to proceed on drift unless --force-after-drift.
+const BaselineHashHeader = "-- pg-flux-baseline-hash: "
 
 // GenerateOptions controls migration file generation.
 type GenerateOptions struct {
@@ -86,7 +92,8 @@ func Generate(
 		return &GenerateResult{}, nil
 	}
 
-	sql := buildMigrationSQL(diffResult.Plan)
+	baselineHash := hashstate.OfSchemaState(live)
+	sql := buildMigrationSQL(diffResult.Plan, baselineHash)
 	filename := TimestampFilename(opts.Label)
 	fullPath := filepath.Join(opts.MigrationsDir, filename)
 
@@ -105,10 +112,16 @@ func Generate(
 }
 
 // buildMigrationSQL renders the plan statements as SQL with comments.
-func buildMigrationSQL(p *plan.ExecutionPlan) string {
+// baselineHash is the hashstate.OfSchemaState() value for the live DB at
+// generate time; apply will refuse to proceed against a drifted live DB.
+func buildMigrationSQL(p *plan.ExecutionPlan, baselineHash string) string {
 	var b strings.Builder
 	b.WriteString("-- pg-flux generated migration\n")
-	b.WriteString("-- DO NOT EDIT unless you know what you are doing.\n\n")
+	b.WriteString("-- DO NOT EDIT unless you know what you are doing.\n")
+	if baselineHash != "" {
+		fmt.Fprintf(&b, "%s%s\n", BaselineHashHeader, baselineHash)
+	}
+	b.WriteString("\n")
 
 	// Separate advisory/concurrent statements from regular (transactional) ones.
 	// Regular non-concurrent DDL is wrapped in an explicit BEGIN/COMMIT so the

@@ -28,6 +28,13 @@ type Options struct {
 	// plus a follow-up VALIDATE CONSTRAINT (per PRD P3-14). Default ON in the CLI: keeps
 	// the AccessExclusive scan off the critical path.
 	AutoConstraintNotValid bool
+	// AllowMassDrop disables the mass-drop guard. When false (default), Diff returns
+	// a *MassDropError if the plan would drop >MassDropThresholdPct of live objects
+	// or would wipe a non-empty DB entirely. Set via --allow-mass-drop.
+	AllowMassDrop bool
+	// MassDropThresholdPct is the percentage above which the mass-drop guard trips
+	// (default 25 when zero). Ignored when AllowMassDrop is true.
+	MassDropThresholdPct float64
 }
 
 // DiffResult contains a migration plan.
@@ -199,6 +206,9 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 	changes = append(changes, diffForeignServers(desired, live)...)
 	changes = append(changes, diffForeignTables(desired, live)...)
 	changes = injectViewRefreshForTypeChanges(changes, desired, live)
+	if err := checkMassDrop(changes, live, opt.AllowMassDrop, opt.MassDropThresholdPct); err != nil {
+		return nil, err
+	}
 	sortChangesDeterministic(desired, changes)
 	stmts := buildStatements(changes, desired, live, opt)
 	// attach hazard metadata
