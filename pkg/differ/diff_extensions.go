@@ -186,28 +186,47 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 						// Always use the fully-qualified name (ns already defaults to "public")
 						// so ALTER TYPE ... ADD VALUE works regardless of search_path.
 						qualName := ns + "." + m[2]
-						// Detect removed enum values — PostgreSQL does not support DROP VALUE.
-						// Emit a blocking advisory so the user knows manual recreation is required.
 						desiredSet := make(map[string]struct{}, len(desiredVals))
 						for _, v := range desiredVals {
 							desiredSet[v] = struct{}{}
 						}
+						// Detect renames before logging removed-as-data-loss. A rename appears
+						// as a desired value not in live AND a live value not in desired at
+						// the SAME position. PG12+ supports ALTER TYPE foo RENAME VALUE
+						// 'old' TO 'new', which is the correct emit for this pattern.
+						renamed := detectEnumRenames(desiredVals, liveVals, liveSet, desiredSet)
+						for _, r := range renamed {
+							out = append(out, change{
+								kind:   plan.ChangeRawSQL,
+								rawSQL: fmt.Sprintf("ALTER TYPE %s RENAME VALUE '%s' TO '%s'", qualName, r.From, r.To),
+							})
+							// Update tracking sets so removed-detection below doesn't treat
+							// the renamed-old as a still-pending removal.
+							delete(liveSet, r.From)
+							liveSet[r.To] = struct{}{}
+						}
+						// Now report any remaining live-only values as blocking — PG offers
+						// no DROP VALUE, so the type must be recreated.
 						for _, lv := range liveVals {
-							if _, ok := desiredSet[lv]; !ok {
-								out = append(out, change{
-									kind: plan.ChangeRawSQL,
-									extraHazards: []hazard.Detected{{
-										Type:     hazard.DataLoss,
-										Severity: hazard.SeverityBlocking,
-										Message:  fmt.Sprintf("enum type %s: value '%s' exists in live DB but not in desired schema — PostgreSQL does not support ALTER TYPE DROP VALUE; type must be manually recreated to remove it", qualName, lv),
-									}},
-								})
+							if _, ok := desiredSet[lv]; ok {
+								continue
 							}
+							if _, stillLive := liveSet[lv]; !stillLive {
+								continue // already accounted for by a rename
+							}
+							out = append(out, change{
+								kind: plan.ChangeRawSQL,
+								extraHazards: []hazard.Detected{{
+									Type:     hazard.DataLoss,
+									Severity: hazard.SeverityBlocking,
+									Message:  fmt.Sprintf("enum type %s: value '%s' exists in live DB but not in desired schema — PostgreSQL does not support ALTER TYPE DROP VALUE; type must be manually recreated to remove it", qualName, lv),
+								}},
+							})
 						}
 						// Add new values in desired order, using BEFORE/AFTER to preserve position.
 						for i, v := range desiredVals {
 							if _, ok := liveSet[v]; ok {
-								continue // already exists
+								continue // already exists (possibly after rename)
 							}
 							addSQL := "ALTER TYPE " + qualName + " ADD VALUE IF NOT EXISTS '" + v + "'"
 							// Position the new value relative to neighbours in the desired list.
