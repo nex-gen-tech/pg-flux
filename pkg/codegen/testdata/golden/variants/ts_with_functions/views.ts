@@ -3,7 +3,8 @@
 
 /** Read-only row from view public.active_users. */
 export interface ActiveUser {
-  // fields: not yet inferred from view definition;
-  // add manually or override via codegen config.
+  id: bigint | null;
+  email: string | null;
+  last_seen: Date | null;
 }
 

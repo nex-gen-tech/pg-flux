@@ -350,8 +350,25 @@ func (g *GoGenerator) emitViews(s *schema.SchemaState, tm TypeMap, opts Options)
 		}
 		writeGoDoc(&b, typeName, comment)
 		fmt.Fprintf(&b, "type %s struct {\n", typeName)
-		fmt.Fprintf(&b, "\t// fields: not yet inferred from view definition;\n")
-		fmt.Fprintf(&b, "\t// add manually or override via codegen config.\n")
+		if len(v.Columns) == 0 {
+			// Fallback: inspector couldn't extract columns (shouldn't happen
+			// for any view PG resolved successfully). Leave the marker so the
+			// generated code compiles.
+			b.WriteString("\t// fields: not yet inferred from view definition\n")
+		}
+		for _, c := range v.Columns {
+			if c == nil {
+				continue
+			}
+			field := PascalCaseInit(c.Name)
+			// View columns are nullable (NotNull is false per inspector). Use
+			// the nullable form so app code can handle NULL from outer joins,
+			// COALESCE-less aggregates returning NULL, etc.
+			typeExpr, imps := tm.Map(c.TypeSQL, true)
+			imports = append(imports, imps...)
+			tag := buildGoTag(c, opts.Emit)
+			fmt.Fprintf(&b, "\t%s %s %s\n", field, typeExpr, tag)
+		}
 		b.WriteString("}\n\n")
 	}
 	return b.String(), imports, true

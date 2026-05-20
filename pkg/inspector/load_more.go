@@ -173,7 +173,63 @@ func loadViewsMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (ma
 		}
 		out[k] = v
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Second pass: populate view column types from pg_attribute. Views and
+	// matviews both have rows in pg_attribute the same way tables do — PG
+	// resolves the SELECT output types at view-creation time and stores them
+	// in the catalog.
+	if err := loadViewColumns(ctx, pool, out, schemas); err != nil {
+		return nil, fmt.Errorf("load view columns: %w", err)
+	}
+	return out, nil
+}
+
+// loadViewColumns fills Columns on each view in `views` by querying pg_attribute
+// for that view's relation. Called as a second pass so the views map is already
+// keyed before per-relation column lookups happen.
+func loadViewColumns(ctx context.Context, pool *pgxpool.Pool, views map[string]*schema.View, schemas []string) error {
+	rows, err := pool.Query(ctx, `
+		SELECT
+			n.nspname,
+			c.relname,
+			a.attnum,
+			a.attname,
+			pg_catalog.format_type(a.atttypid, a.atttypmod) AS type_sql
+		FROM pg_attribute a
+		JOIN pg_class c     ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind IN ('v', 'm')
+		  AND n.nspname = ANY($1)
+		  AND a.attnum > 0
+		  AND NOT a.attisdropped
+		ORDER BY n.nspname, c.relname, a.attnum
+	`, schemas)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nsp, rel, name, typeSQL string
+		var attnum int16
+		if err := rows.Scan(&nsp, &rel, &attnum, &name, &typeSQL); err != nil {
+			return err
+		}
+		k := schema.ViewKey(strings.ToLower(nsp), strings.ToLower(rel))
+		v := views[k]
+		if v == nil {
+			continue
+		}
+		v.Columns = append(v.Columns, &schema.Column{
+			Name:    strings.ToLower(name),
+			TypeSQL: typeSQL,
+			// View columns are inherently nullable from the perspective of the
+			// SELECT output (PG sets attnotnull=false for all of them).
+			NotNull: false,
+		})
+	}
+	return rows.Err()
 }
 
 func loadSequenceMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (map[string]*schema.Sequence, error) {

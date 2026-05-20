@@ -364,8 +364,26 @@ func (g *TSGenerator) emitViews(s *schema.SchemaState, opts Options) (string, bo
 		fallback := fmt.Sprintf("Read-only row from %s %s.%s.", kw, v.Schema, v.Name)
 		writeTSDoc(&b, v.Comment, fallback)
 		fmt.Fprintf(&b, "export interface %s {\n", typeName)
-		b.WriteString("  // fields: not yet inferred from view definition;\n")
-		b.WriteString("  // add manually or override via codegen config.\n")
+		if len(v.Columns) == 0 {
+			b.WriteString("  // fields: not yet inferred from view definition\n")
+		}
+		for _, c := range v.Columns {
+			if c == nil {
+				continue
+			}
+			key := opts.Emit.ApplyColumnCase(c.Name)
+			// View columns are always nullable; honour the configured NullStyle.
+			typeExpr, _ := opts.TypeMap.Map(c.TypeSQL, true)
+			suffix := ":"
+			switch opts.Emit.NullStyle {
+			case "optional":
+				suffix = "?:"
+				typeExpr = stripNullSuffix(typeExpr)
+			case "undefined":
+				typeExpr = stripNullSuffix(typeExpr) + " | undefined"
+			}
+			fmt.Fprintf(&b, "  %s%s %s;\n", key, suffix, typeExpr)
+		}
 		b.WriteString("}\n\n")
 	}
 	return b.String(), true

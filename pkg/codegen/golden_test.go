@@ -61,7 +61,14 @@ func fixtureState() *schema.SchemaState {
 			"public.short_text": {Schema: "public", Name: "short_text", BaseType: "text"},
 		},
 		Views: map[string]*schema.View{
-			"public.active_users": {Schema: "public", Name: "active_users"},
+			"public.active_users": {
+				Schema: "public", Name: "active_users",
+				Columns: []*schema.Column{
+					{Name: "id", TypeSQL: "bigint"},
+					{Name: "email", TypeSQL: "text"},
+					{Name: "last_seen", TypeSQL: "timestamptz"},
+				},
+			},
 		},
 		Functions: map[string]*schema.Function{
 			// Scalar return — emits a Row alias.

@@ -3,8 +3,13 @@
 
 package dbgen
 
+import (
+	"time"
+)
+
 // ActiveUser — Read-only row from view public.active_users.
 type ActiveUser struct {
-	// fields: not yet inferred from view definition;
-	// add manually or override via codegen config.
+	ID       *int64     `db:"id" json:"id"`
+	Email    *string    `db:"email" json:"email"`
+	LastSeen *time.Time `db:"last_seen" json:"last_seen"`
 }

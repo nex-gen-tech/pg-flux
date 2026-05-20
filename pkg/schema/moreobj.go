@@ -59,6 +59,13 @@ type View struct {
 	// SecurityInvoker is the PG15+ security_invoker reloption (run-as-invoker views).
 	SecurityInvoker bool
 	Privileges      []Privilege
+	// Columns lists the view's output columns with their inferred PG types.
+	// Populated by the inspector from pg_attribute joined with format_type. Lets
+	// codegen emit real fields instead of a marker stub. NULL information for
+	// view columns can't be inferred from pg_attribute alone (attnotnull is
+	// false for all view columns regardless of the underlying source), so we
+	// conservatively treat every view column as nullable.
+	Columns []*Column
 }
 
 // Sequence is a free-standing sequence.
