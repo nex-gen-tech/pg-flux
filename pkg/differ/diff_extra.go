@@ -305,6 +305,18 @@ func applyColRenames(s string, renames map[string]string) string {
 	return s
 }
 
+// reIndexAscNullsLast / reIndexDescNullsFirst strip redundant NULLS clauses where
+// they match PG's default ordering — pg_get_indexdef omits them, but source SQL
+// often spells them out:
+//   ASC NULLS LAST    is the ASC default  → bare ASC (or nothing)
+//   DESC NULLS FIRST  is the DESC default → bare DESC
+//   ASC               is the column default → strip entirely
+var (
+	reIndexAscNullsLast   = regexp.MustCompile(`(?i)\basc\s+nulls\s+last\b`)
+	reIndexDescNullsFirst = regexp.MustCompile(`(?i)\bdesc\s+nulls\s+first\b`)
+	reIndexBareAsc        = regexp.MustCompile(`(?i)\basc\b\s*(,|\))`)
+)
+
 // indexFingerprintNormalizers collapse harmless differences in CREATE INDEX.
 func indexFingerprintNormalizers(s string, tableSchema string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -314,6 +326,11 @@ func indexFingerprintNormalizers(s string, tableSchema string) string {
 	// pg_get_indexdef uses "ON ONLY" for indexes on partitioned table parents;
 	// source SQL omits "ONLY". Normalize both to "ON".
 	s = strings.ReplaceAll(s, " on only ", " on ")
+	// Strip redundant default NULLS clauses (see regex docs above).
+	s = reIndexAscNullsLast.ReplaceAllString(s, "")
+	s = reIndexDescNullsFirst.ReplaceAllString(s, "desc")
+	// Strip bare "ASC" before commas / closing paren (column default ordering).
+	s = reIndexBareAsc.ReplaceAllString(s, "$1")
 	ts := strings.TrimSpace(strings.ToLower(tableSchema))
 	if ts != "" {
 		s = strings.ReplaceAll(s, "on "+ts+".", "on ")
