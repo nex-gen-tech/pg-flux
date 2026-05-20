@@ -82,6 +82,9 @@ type Trigger struct {
 	// IsConstraint marks pg_trigger.tgconstraint != 0 — a CONSTRAINT TRIGGER
 	// (used for deferred FK / unique enforcement).
 	IsConstraint bool
+	// Enabled mirrors pg_trigger.tgenabled: "O" = origin/enabled (default), "D" = disabled,
+	// "R" = enabled on replica only, "A" = always enabled. Empty defaults to "O".
+	Enabled string
 }
 
 // Statistics models a CREATE STATISTICS object (pg_statistic_ext).

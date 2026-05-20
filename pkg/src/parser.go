@@ -80,6 +80,14 @@ func LoadDesiredState(opt LoadOptions) (*schema.SchemaState, error) {
 		}
 	}
 	st.PendingRLS = nil
+	// Second pass: apply any buffered ALTER TABLE ... ENABLE/DISABLE TRIGGER directives
+	// to triggers that now exist (CREATE TRIGGER may have been in a later-sorted file).
+	for k, state := range st.PendingTriggerState {
+		if tg := st.Triggers[k]; tg != nil {
+			tg.Enabled = state
+		}
+	}
+	st.PendingTriggerState = nil
 	// Second pass: apply any buffered ALTER POLICY statements whose CREATE POLICY
 	// was in a file that sorted after the ALTER POLICY file (cross-file ordering).
 	for _, p := range st.PendingAlterPolicy {

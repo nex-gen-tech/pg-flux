@@ -237,7 +237,8 @@ func loadTriggerMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (
 			trel.relname,
 			lower(t.tgname),
 			pg_get_triggerdef(t.oid, true) AS def,
-			t.tgconstraint <> 0 AS is_constraint
+			t.tgconstraint <> 0 AS is_constraint,
+			t.tgenabled::text                AS enabled
 		FROM pg_trigger t
 		JOIN pg_class trel ON trel.oid = t.tgrelid
 		JOIN pg_namespace tn ON tn.oid = trel.relnamespace
@@ -249,16 +250,23 @@ func loadTriggerMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (
 	defer rows.Close()
 	out := make(map[string]*schema.Trigger)
 	for rows.Next() {
-		var nsp, rel, tg, def string
+		var nsp, rel, tg, def, enabled string
 		var isConstraint bool
-		if err := rows.Scan(&nsp, &rel, &tg, &def, &isConstraint); err != nil {
+		if err := rows.Scan(&nsp, &rel, &tg, &def, &isConstraint, &enabled); err != nil {
 			return nil, err
 		}
 		nsp = strings.ToLower(nsp)
 		rel = strings.ToLower(rel)
 		tg = strings.ToLower(tg)
 		k := schema.TriggerKey(nsp, rel, tg)
-		out[k] = &schema.Trigger{Schema: nsp, Table: rel, Name: tg, DefSQL: def, IsConstraint: isConstraint}
+		out[k] = &schema.Trigger{
+			Schema:       nsp,
+			Table:        rel,
+			Name:         tg,
+			DefSQL:       def,
+			IsConstraint: isConstraint,
+			Enabled:      enabled,
+		}
 	}
 	return out, rows.Err()
 }

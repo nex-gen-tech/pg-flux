@@ -32,6 +32,11 @@ type SchemaState struct {
 	// PendingAlterPolicy holds ALTER POLICY statements that arrived before their CREATE POLICY
 	// (cross-file ordering). Applied as a post-processing step in LoadDesiredState.
 	PendingAlterPolicy []*PendingAlterPol
+	// PendingTriggerState carries ALTER TABLE ... ENABLE/DISABLE TRIGGER directives that
+	// may arrive before the CREATE TRIGGER on the same trigger key (cross-file ordering).
+	// Resolved in the second pass of LoadDesiredState. Map value is tgenabled code
+	// ("O","D","R","A"). Not used by the inspector.
+	PendingTriggerState map[string]string
 	// PartitionChildren is the set of live partition child table keys ("schema.name").
 	// Populated by the inspector so diffExtraDDL can skip CREATE TABLE IF NOT EXISTS
 	// for partition children that already exist.

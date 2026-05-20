@@ -23,6 +23,9 @@ func captureAlterTable(at *pgq.AlterTableStmt, raw *pgq.RawStmt, st *schema.Sche
 	var rlsOn *bool
 	var rlsForce *bool
 	needDeparse := false
+	// triggerStates collects per-trigger state changes from ALTER TABLE ... ENABLE/DISABLE TRIGGER name.
+	// Map key = lowercase trigger name; value = pg_trigger.tgenabled code ("O","D","R","A").
+	triggerStates := map[string]string{}
 	for _, node := range at.GetCmds() {
 		if node == nil {
 			continue
@@ -46,6 +49,36 @@ func captureAlterTable(at *pgq.AlterTableStmt, raw *pgq.RawStmt, st *schema.Sche
 			rlsForce = &v
 		case pgq.AlterTableType_AT_AttachPartition, pgq.AlterTableType_AT_DetachPartition, pgq.AlterTableType_AT_DetachPartitionFinalize:
 			needDeparse = true
+		case pgq.AlterTableType_AT_EnableTrig:
+			if n := strings.ToLower(ac.GetName()); n != "" {
+				triggerStates[n] = "O"
+			}
+		case pgq.AlterTableType_AT_EnableAlwaysTrig:
+			if n := strings.ToLower(ac.GetName()); n != "" {
+				triggerStates[n] = "A"
+			}
+		case pgq.AlterTableType_AT_EnableReplicaTrig:
+			if n := strings.ToLower(ac.GetName()); n != "" {
+				triggerStates[n] = "R"
+			}
+		case pgq.AlterTableType_AT_DisableTrig:
+			if n := strings.ToLower(ac.GetName()); n != "" {
+				triggerStates[n] = "D"
+			}
+		}
+	}
+	for tgName, state := range triggerStates {
+		tk := schema.TriggerKey(sch, tname, tgName)
+		if existing, ok := st.Triggers[tk]; ok && existing != nil {
+			existing.Enabled = state
+		}
+		// If the trigger isn't captured yet (ALTER TABLE before CREATE TRIGGER in load order),
+		// stash the pending state and apply in a second pass.
+		if existing := st.Triggers[tk]; existing == nil {
+			if st.PendingTriggerState == nil {
+				st.PendingTriggerState = map[string]string{}
+			}
+			st.PendingTriggerState[tk] = state
 		}
 	}
 	if needDeparse {

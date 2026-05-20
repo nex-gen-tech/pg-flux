@@ -456,11 +456,26 @@ func diffTriggers(d, l *schema.SchemaState) []change {
 		ltg := l.Triggers[k]
 		if ltg == nil {
 			out = append(out, change{kind: plan.ChangeCreateTrigger, trig: dt})
+			// New trigger created with non-default state — emit a follow-up ALTER.
+			// PG creates triggers in ENABLE/origin mode regardless of intent.
+			if normTriggerEnabled(dt.Enabled) != "O" {
+				out = append(out, triggerEnableChange(dt, normTriggerEnabled(dt.Enabled)))
+			}
 			continue
 		}
 		if createStmtDefFingerprint(dt.DefSQL) != createStmtDefFingerprint(ltg.DefSQL) {
 			out = append(out, change{kind: plan.ChangeDropTrigger, trig: ltg, trigKey: k})
 			out = append(out, change{kind: plan.ChangeCreateTrigger, trig: dt})
+			if normTriggerEnabled(dt.Enabled) != "O" {
+				out = append(out, triggerEnableChange(dt, normTriggerEnabled(dt.Enabled)))
+			}
+			continue
+		}
+		// Definition matched — check the enable/disable state separately so an
+		// ENABLE/DISABLE/REPLICA/ALWAYS flip emits a single targeted ALTER, no
+		// destructive DROP+CREATE that would lose ON/OFF history.
+		if normTriggerEnabled(dt.Enabled) != normTriggerEnabled(ltg.Enabled) {
+			out = append(out, triggerEnableChange(dt, normTriggerEnabled(dt.Enabled)))
 		}
 	}
 	for k, ltg := range l.Triggers {
@@ -472,4 +487,35 @@ func diffTriggers(d, l *schema.SchemaState) []change {
 		}
 	}
 	return out
+}
+
+// normTriggerEnabled returns the canonical tgenabled letter; empty defaults to "O" (origin/enabled).
+func normTriggerEnabled(s string) string {
+	if s == "" {
+		return "O"
+	}
+	return s
+}
+
+// triggerEnableChange returns a raw ALTER TABLE statement flipping a trigger's
+// enable state to `state` ("O","D","R","A"). Uses ChangeRawSQL so it slots into
+// the existing pass-through emit path without a new ChangeType.
+func triggerEnableChange(dt *schema.Trigger, state string) change {
+	var verb string
+	switch state {
+	case "D":
+		verb = "DISABLE TRIGGER"
+	case "R":
+		verb = "ENABLE REPLICA TRIGGER"
+	case "A":
+		verb = "ENABLE ALWAYS TRIGGER"
+	default:
+		verb = "ENABLE TRIGGER" // "O"
+	}
+	return change{
+		kind: plan.ChangeRawSQL,
+		rawSQL: "ALTER TABLE " + ident(dt.Schema) + "." + ident(dt.Table) +
+			" " + verb + " " + ident(dt.Name),
+		tbl: schema.TableKey(dt.Schema, dt.Table),
+	}
 }
