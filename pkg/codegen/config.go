@@ -57,6 +57,7 @@ type OutputConfig struct {
 	ORMTags             string            `yaml:"orm_tags,omitempty"`             // gorm | sqlx | bun | ent | "" (Go)
 	OmitEmpty           string            `yaml:"omitempty,omitempty"`            // nullable | defaults | all | "" (Go)
 	JSONShapes          map[string]string `yaml:"json_shapes,omitempty"`          // "schema.table.column" → TS type
+	Functions           bool              `yaml:"functions,omitempty"`            // emit function/procedure param + result types
 
 	// --- Filtering ---
 
@@ -82,6 +83,7 @@ func (o OutputConfig) ToEmitOptions() EmitOptions {
 		ORMTags:             o.ORMTags,
 		OmitEmpty:           o.OmitEmpty,
 		JSONShapes:          o.JSONShapes,
+		Functions:           o.Functions,
 		Filter: Filter{
 			IncludeTables:  o.IncludeTables,
 			ExcludeTables:  o.ExcludeTables,

@@ -63,6 +63,42 @@ func fixtureState() *schema.SchemaState {
 		Views: map[string]*schema.View{
 			"public.active_users": {Schema: "public", Name: "active_users"},
 		},
+		Functions: map[string]*schema.Function{
+			// Scalar return — emits a Row alias.
+			"public.length_of(text)": {
+				Schema: "public", Name: "length_of",
+				Kind: "f", Identity: "public.length_of(text)",
+				Args: []schema.FunctionArg{
+					{Name: "s", Type: "text", Mode: "i"},
+				},
+				ReturnType: "integer",
+			},
+			// RETURNS TABLE — emits a Result struct/interface.
+			"public.calculate_score(bigint,numeric)": {
+				Schema: "public", Name: "calculate_score",
+				Kind: "f", Identity: "public.calculate_score(bigint,numeric)",
+				Args: []schema.FunctionArg{
+					{Name: "user_id", Type: "bigint", Mode: "i"},
+					{Name: "weight", Type: "numeric", Mode: "i", HasDefault: true},
+				},
+				ReturnsTable: []schema.FunctionArg{
+					{Name: "score", Type: "numeric", Mode: "t"},
+					{Name: "tier", Type: "text", Mode: "t"},
+				},
+				ReturnsSet: true,
+			},
+			// Procedure — Params only.
+			"public.refresh_caches()": {
+				Schema: "public", Name: "refresh_caches",
+				Kind: "p", Identity: "public.refresh_caches()",
+			},
+			// Trigger function — skipped (void-like return).
+			"public.bump_updated_at()": {
+				Schema: "public", Name: "bump_updated_at",
+				Kind: "f", Identity: "public.bump_updated_at()",
+				ReturnType: "trigger",
+			},
+		},
 	}
 }
 

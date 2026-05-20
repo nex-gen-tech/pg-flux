@@ -68,6 +68,11 @@ func (g *GoGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet, er
 			return out, err
 		}
 	}
+	if b, imps, ok := g.emitGoFunctions(s, tm, opts); ok {
+		if err := add("functions.go", g.fileHeader(opts.Package, imps)+b); err != nil {
+			return out, err
+		}
+	}
 	return out, nil
 }
 

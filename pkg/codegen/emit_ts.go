@@ -72,9 +72,22 @@ func (g *TSGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet, er
 		out["views.ts"] = []byte(g.fileHeader() + b)
 		hasViews = true
 	}
+	hasFunctions := false
+	if b, ok := g.emitTSFunctions(s, opts); ok {
+		out["functions.ts"] = []byte(g.fileHeader() + b)
+		hasFunctions = true
+	}
 
-	if hasTables || hasEnums || hasTypes || hasViews {
-		out["index.ts"] = []byte(g.barrel(hasTables, hasEnums, hasTypes, hasViews, hasBranded, opts.Emit.Validators == "zod"))
+	if hasTables || hasEnums || hasTypes || hasViews || hasFunctions {
+		out["index.ts"] = []byte(g.barrel(barrelParts{
+			tables:     hasTables,
+			enums:      hasEnums,
+			types:      hasTypes,
+			views:      hasViews,
+			brands:     hasBranded,
+			validators: opts.Emit.Validators == "zod",
+			functions:  hasFunctions,
+		}))
 	}
 	if opts.Emit.Validators == "zod" && (hasTables || hasEnums || hasTypes) {
 		out["validators.ts"] = []byte(g.fileHeader() + emitZodValidators(s, opts, g))
@@ -87,25 +100,34 @@ func (g *TSGenerator) fileHeader() string {
 		"// To regenerate, run: pg-flux gen\n\n"
 }
 
-func (g *TSGenerator) barrel(tbl, enum, typ, view, branded, validators bool) string {
+// barrelParts is a small bag-of-bools so adding new emit kinds doesn't
+// keep widening the barrel() signature.
+type barrelParts struct {
+	tables, enums, types, views, brands, validators, functions bool
+}
+
+func (g *TSGenerator) barrel(p barrelParts) string {
 	var b strings.Builder
 	b.WriteString(g.fileHeader())
-	if branded {
+	if p.brands {
 		b.WriteString("export * from './brands';\n")
 	}
-	if enum {
+	if p.enums {
 		b.WriteString("export * from './enums';\n")
 	}
-	if typ {
+	if p.types {
 		b.WriteString("export * from './types';\n")
 	}
-	if tbl {
+	if p.tables {
 		b.WriteString("export * from './tables';\n")
 	}
-	if view {
+	if p.views {
 		b.WriteString("export * from './views';\n")
 	}
-	if validators {
+	if p.functions {
+		b.WriteString("export * from './functions';\n")
+	}
+	if p.validators {
 		b.WriteString("export * from './validators';\n")
 	}
 	return b.String()

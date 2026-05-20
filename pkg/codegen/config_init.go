@@ -42,6 +42,10 @@ outputs:
     #   numeric: github.com/shopspring/decimal.Decimal
     #   uuid:    github.com/google/uuid.UUID
 
+    # Emit Params + Result types for user-defined functions and procedures.
+    # Default off because large schemas often have many helper fns.
+    # functions: false
+
   - lang: ts
     out: ./src/db
     # bigint / int8 / bigserial mapping:
@@ -97,6 +101,9 @@ outputs:
     # type_overrides:
     #   numeric: string
     #   uuid:    string
+
+    # Emit Params + Result interfaces for user-defined functions / procedures.
+    # functions: false
 
 # Filtering — apply per output target.
 # include_tables: ["users", "posts"]        # allowlist (matches schema.name or name)

@@ -69,6 +69,20 @@ var variantScenarios = []variantScenario{
 			Filter: Filter{ExcludeTables: []string{"posts"}},
 		},
 	},
+	{
+		name: "ts_with_functions",
+		lang: LangTypeScript,
+		opts: EmitOptions{
+			Functions: true,
+		},
+	},
+	{
+		name: "go_with_functions",
+		lang: LangGo,
+		opts: EmitOptions{
+			Functions: true,
+		},
+	},
 }
 
 // TestGoldenVariants exercises every entry of variantScenarios. Each scenario

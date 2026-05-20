@@ -425,6 +425,7 @@ func cmdGen() *cobra.Command {
 		flagBranded    bool
 		flagInsertUpdt bool
 		flagReadonly   string
+		flagFunctions  bool
 	)
 	c := &cobra.Command{
 		Use:   "gen",
@@ -531,6 +532,9 @@ func cmdGen() *cobra.Command {
 				if cmd.Flags().Changed("readonly") {
 					outputs[i].Readonly = flagReadonly
 				}
+				if cmd.Flags().Changed("functions") {
+					outputs[i].Functions = flagFunctions
+				}
 			}
 
 			anyDiff := false
@@ -593,6 +597,7 @@ func cmdGen() *cobra.Command {
 	c.Flags().BoolVar(&flagBranded, "branded-ids", false, "TS: emit branded ID types (UserId = bigint & {__brand})")
 	c.Flags().BoolVar(&flagInsertUpdt, "insert-update-helpers", false, "TS: emit Insert<T> + Update<T> partial helpers")
 	c.Flags().StringVar(&flagReadonly, "readonly", "", "mark readonly columns: identity | generated | defaults | all")
+	c.Flags().BoolVar(&flagFunctions, "functions", false, "emit Params + Result types for user-defined functions and procedures")
 
 	c.AddCommand(cmdGenInit())
 	return c

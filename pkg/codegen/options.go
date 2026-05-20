@@ -93,6 +93,12 @@ type EmitOptions struct {
 	// columns whose runtime shape is known. Replaces `unknown` with the
 	// declared type. Go side ignores this since json.RawMessage is generic.
 	JSONShapes map[string]string
+
+	// Functions, when true, emits parameter + result types for user-defined
+	// functions and procedures (functions.go / functions.ts). Default off
+	// because large schemas often have many helper functions and the user
+	// may not want them flooding the generated output.
+	Functions bool
 }
 
 // Layout is the file-organisation strategy for generator output.

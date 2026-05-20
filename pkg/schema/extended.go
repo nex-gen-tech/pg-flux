@@ -43,6 +43,33 @@ type Function struct {
 	Config []string
 	// Privileges captures GRANT EXECUTE on this function (pg_proc.proacl).
 	Privileges []Privilege
+
+	// --- Structured signature (populated by inspector; empty when loaded from source) ---
+
+	// Args lists IN / INOUT / VARIADIC parameters in source order. OUT-mode
+	// args are split into ReturnsTable when the function uses RETURNS TABLE
+	// or has bare OUT parameters.
+	Args []FunctionArg
+	// ReturnType is the formatted PG type returned by the function (e.g.
+	// "integer", "public.user_role", "void"). Empty for procedures.
+	ReturnType string
+	// ReturnsSet is true for SETOF-returning functions.
+	ReturnsSet bool
+	// ReturnsTable, when non-empty, lists the OUT columns of a RETURNS TABLE
+	// (...) function or the set of OUT args that synthesise a row type.
+	ReturnsTable []FunctionArg
+}
+
+// FunctionArg is one parameter or return-table column of a function.
+// Mode maps to pg_proc.proargmodes: "i" (IN, default), "o" (OUT), "b" (INOUT),
+// "v" (VARIADIC), "t" (TABLE column — used in ReturnsTable).
+type FunctionArg struct {
+	Name string
+	Type string
+	Mode string
+	// HasDefault is true when the parameter has a DEFAULT clause (codegen
+	// emitters can mark these as optional).
+	HasDefault bool
 }
 
 // Policy is a row-level security policy.

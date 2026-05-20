@@ -328,7 +328,10 @@ func loadIndexMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (ma
 }
 
 func loadFunctionMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (map[string]*schema.Function, error) {
-	// Only plain functions (not agg/window) in v1
+	// Plain functions / procedures / aggregates / window functions; not extension-owned.
+	// The extra columns at the end carry the structured arg/return information that
+	// pkg/codegen consumes when functions: true. proallargtypes is null when the
+	// function has only IN params — fall back to proargtypes in that case.
 	rows, err := pool.Query(ctx, `
 		SELECT
 			n.nspname, p.proname, l.lanname, p.prokind::text, pg_get_functiondef(p.oid),
@@ -342,7 +345,19 @@ func loadFunctionMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 			p.proleakproof,
 			p.procost,
 			p.prorows,
-			COALESCE(p.proconfig, ARRAY[]::text[]) AS proconfig
+			COALESCE(p.proconfig, ARRAY[]::text[]) AS proconfig,
+			-- Structured args: names, formatted types, modes (per-position).
+			COALESCE(p.proargnames, ARRAY[]::text[]) AS arg_names,
+			COALESCE(
+				(SELECT array_agg(format_type(t, NULL) ORDER BY ord)
+				 FROM unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[]))
+				   WITH ORDINALITY AS u(t, ord)),
+				ARRAY[]::text[]
+			) AS arg_types_fmt,
+			COALESCE(p.proargmodes::text[], ARRAY[]::text[]) AS arg_modes,
+			p.pronargdefaults,
+			format_type(p.prorettype, NULL) AS return_type,
+			p.proretset
 		FROM pg_proc p
 		JOIN pg_namespace n ON n.oid = p.pronamespace
 		JOIN pg_language l ON l.oid = p.prolang
@@ -363,8 +378,13 @@ func loadFunctionMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 		var prosecdef, proleakproof bool
 		var procost, prorows float64
 		var proconfig []string
+		var argNames, argTypesFmt, argModes []string
+		var nargDefaults int32
+		var returnType string
+		var returnsSet bool
 		if err := rows.Scan(&nsp, &name, &lang, &pkind, &def, &argtypes,
-			&provolatile, &prosecdef, &proparallel, &proleakproof, &procost, &prorows, &proconfig); err != nil {
+			&provolatile, &prosecdef, &proparallel, &proleakproof, &procost, &prorows, &proconfig,
+			&argNames, &argTypesFmt, &argModes, &nargDefaults, &returnType, &returnsSet); err != nil {
 			return nil, err
 		}
 		identity := schema.BuildFunctionIdentity(nsp, name, argtypes)
@@ -398,6 +418,9 @@ func loadFunctionMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 		case "u":
 			fn.Parallel = "UNSAFE"
 		}
+		// Build structured Args / ReturnsTable from the parallel arrays.
+		// proargmodes is empty when every arg is IN — synthesise "i" for each.
+		buildFunctionSignature(fn, argNames, argTypesFmt, argModes, int(nargDefaults), returnType, returnsSet)
 		out[fk] = fn
 	}
 	return out, rows.Err()
