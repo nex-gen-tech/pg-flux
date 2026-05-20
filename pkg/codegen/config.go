@@ -31,14 +31,65 @@ type Config struct {
 
 // OutputConfig is one (language, destination, options) triplet from Config.Outputs.
 type OutputConfig struct {
-	Lang          Language          `yaml:"lang"`
-	Out           string            `yaml:"out"`
-	Package       string            `yaml:"package,omitempty"`
+	Lang    Language `yaml:"lang"`
+	Out     string   `yaml:"out"`
+	Package string   `yaml:"package,omitempty"`
+	// TypeOverrides maps PG types → language types. Go values may be fully-
+	// qualified ("github.com/foo/bar.Baz"); TS values are emitted verbatim.
 	TypeOverrides map[string]string `yaml:"type_overrides,omitempty"`
 	// NameOverrides forces a specific generated identifier for a PG identifier.
 	// Keys are "schema.name" or just "name". Values are the literal language
 	// identifier to emit (no PascalCase transformation applied).
 	NameOverrides map[string]string `yaml:"name_overrides,omitempty"`
+
+	// --- Emit options ---
+
+	Layout              string            `yaml:"layout,omitempty"`               // per-kind | per-object | single
+	ColumnCase          string            `yaml:"column_case,omitempty"`          // snake | camel | pascal
+	Readonly            string            `yaml:"readonly,omitempty"`             // identity | generated | defaults | all | none
+	InsertUpdateHelpers bool              `yaml:"insert_update_helpers,omitempty"`
+	BrandedIDs          bool              `yaml:"branded_ids,omitempty"`
+	BigintAs            string            `yaml:"bigint_as,omitempty"`            // bigint | number | string  (TS)
+	DateAs              string            `yaml:"date_as,omitempty"`              // Date | string | temporal (TS)
+	NullStyle           string            `yaml:"null_style,omitempty"`           // union | undefined | optional (TS)
+	EnumStyle           string            `yaml:"enum_style,omitempty"`           // union | const-object | ts-enum (TS)
+	Validators          string            `yaml:"validators,omitempty"`           // zod | "" (TS)
+	ORMTags             string            `yaml:"orm_tags,omitempty"`             // gorm | sqlx | bun | ent | "" (Go)
+	OmitEmpty           string            `yaml:"omitempty,omitempty"`            // nullable | defaults | all | "" (Go)
+	JSONShapes          map[string]string `yaml:"json_shapes,omitempty"`          // "schema.table.column" → TS type
+
+	// --- Filtering ---
+
+	IncludeTables  []string `yaml:"include_tables,omitempty"`
+	ExcludeTables  []string `yaml:"exclude_tables,omitempty"`
+	ExcludeSchemas []string `yaml:"exclude_schemas,omitempty"`
+}
+
+// ToEmitOptions translates the YAML-friendly OutputConfig into the strongly-
+// typed EmitOptions consumed by the generators.
+func (o OutputConfig) ToEmitOptions() EmitOptions {
+	eo := EmitOptions{
+		Layout:              Layout(o.Layout),
+		ColumnCase:          ColumnCase(o.ColumnCase),
+		Readonly:            ReadonlyPolicy(o.Readonly),
+		InsertUpdateHelpers: o.InsertUpdateHelpers,
+		BrandedIDs:          o.BrandedIDs,
+		BigintAs:            o.BigintAs,
+		DateAs:              o.DateAs,
+		NullStyle:           o.NullStyle,
+		EnumStyle:           o.EnumStyle,
+		Validators:          o.Validators,
+		ORMTags:             o.ORMTags,
+		OmitEmpty:           o.OmitEmpty,
+		JSONShapes:          o.JSONShapes,
+		Filter: Filter{
+			IncludeTables:  o.IncludeTables,
+			ExcludeTables:  o.ExcludeTables,
+			ExcludeSchemas: o.ExcludeSchemas,
+		},
+	}
+	(&eo).normalize()
+	return eo
 }
 
 // LoadConfig reads .pg-flux-codegen.yml from path. Missing file returns

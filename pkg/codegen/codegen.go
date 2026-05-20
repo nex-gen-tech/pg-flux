@@ -65,6 +65,9 @@ type Options struct {
 	TypeMap TypeMap
 	// Schemas filters the schema kinds emitted by SQL schema (default: all).
 	Schemas []string
+	// Emit carries per-output flexibility flags (column case, bigint mode,
+	// ORM tags, filtering, validators, etc.). Zero value is sensible defaults.
+	Emit EmitOptions
 }
 
 // FileSet is the in-memory output of a Generator: relative paths → content bytes.

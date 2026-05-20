@@ -410,13 +410,31 @@ func cmdGen() *cobra.Command {
 		fromSource bool
 		check      bool
 		configFile string
+		// Emit-option flags (CLI shortcuts; config file is canonical).
+		flagColumnCase string
+		flagBigintAs   string
+		flagDateAs     string
+		flagNullStyle  string
+		flagEnumStyle  string
+		flagORMTags    string
+		flagOmitEmpty  string
+		flagValidators string
+		flagInclude    []string
+		flagExclude    []string
+		flagExcludeSch []string
+		flagBranded    bool
+		flagInsertUpdt bool
+		flagReadonly   string
 	)
 	c := &cobra.Command{
 		Use:   "gen",
 		Short: "Generate Go / TypeScript type definitions from the schema",
 		Long: "Reads the pg-flux schema model (live DB or source files) and emits\n" +
 			"application-language types so app code stays in sync after every migration.\n" +
-			"Use --check in CI to fail the build when on-disk generated files are stale.",
+			"Use --check in CI to fail the build when on-disk generated files are stale.\n\n" +
+			"Most flexibility lives in the .pg-flux-codegen.yml config file (run\n" +
+			"`pg-flux gen init` to scaffold one). CLI flags below override config-file\n" +
+			"values for the common single-output case.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -468,6 +486,52 @@ func cmdGen() *cobra.Command {
 					outputs = append(outputs, o)
 				}
 			}
+			// CLI flag overrides take precedence over config — but only when the
+			// user actually passed them, so config defaults are preserved.
+			for i := range outputs {
+				if cmd.Flags().Changed("column-case") {
+					outputs[i].ColumnCase = flagColumnCase
+				}
+				if cmd.Flags().Changed("bigint-as") {
+					outputs[i].BigintAs = flagBigintAs
+				}
+				if cmd.Flags().Changed("date-as") {
+					outputs[i].DateAs = flagDateAs
+				}
+				if cmd.Flags().Changed("null-style") {
+					outputs[i].NullStyle = flagNullStyle
+				}
+				if cmd.Flags().Changed("enum-style") {
+					outputs[i].EnumStyle = flagEnumStyle
+				}
+				if cmd.Flags().Changed("orm-tags") {
+					outputs[i].ORMTags = flagORMTags
+				}
+				if cmd.Flags().Changed("omitempty") {
+					outputs[i].OmitEmpty = flagOmitEmpty
+				}
+				if cmd.Flags().Changed("validators") {
+					outputs[i].Validators = flagValidators
+				}
+				if cmd.Flags().Changed("include-tables") {
+					outputs[i].IncludeTables = flagInclude
+				}
+				if cmd.Flags().Changed("exclude-tables") {
+					outputs[i].ExcludeTables = flagExclude
+				}
+				if cmd.Flags().Changed("exclude-schemas") {
+					outputs[i].ExcludeSchemas = flagExcludeSch
+				}
+				if cmd.Flags().Changed("branded-ids") {
+					outputs[i].BrandedIDs = flagBranded
+				}
+				if cmd.Flags().Changed("insert-update-helpers") {
+					outputs[i].InsertUpdateHelpers = flagInsertUpdt
+				}
+				if cmd.Flags().Changed("readonly") {
+					outputs[i].Readonly = flagReadonly
+				}
+			}
 
 			anyDiff := false
 			for _, o := range outputs {
@@ -479,6 +543,7 @@ func cmdGen() *cobra.Command {
 					OutDir:  o.Out,
 					Package: o.Package,
 					TypeMap: makeTypeMap(o),
+					Emit:    o.ToEmitOptions(),
 				})
 				if err != nil {
 					return fmt.Errorf("[%s] generate: %w", o.Lang, err)
@@ -512,6 +577,49 @@ func cmdGen() *cobra.Command {
 	c.Flags().BoolVar(&fromSource, "from-source", false, "generate from schema files instead of the live DB")
 	c.Flags().BoolVar(&check, "check", false, "exit 1 if on-disk generated files differ from what would be emitted")
 	c.Flags().StringVar(&configFile, "codegen-config", ".pg-flux-codegen.yml", "path to codegen config file")
+
+	// Emit-option flags.
+	c.Flags().StringVar(&flagColumnCase, "column-case", "", "column key naming: snake (default) | camel | pascal")
+	c.Flags().StringVar(&flagBigintAs, "bigint-as", "", "TS bigint mapping: bigint (default) | number | string")
+	c.Flags().StringVar(&flagDateAs, "date-as", "", "TS date mapping: Date (default) | string | temporal")
+	c.Flags().StringVar(&flagNullStyle, "null-style", "", "TS null style: union (default) | undefined | optional")
+	c.Flags().StringVar(&flagEnumStyle, "enum-style", "", "TS enum style: union (default) | const-object | ts-enum")
+	c.Flags().StringVar(&flagORMTags, "orm-tags", "", "Go ORM tag flavor: gorm | sqlx | bun | ent")
+	c.Flags().StringVar(&flagOmitEmpty, "omitempty", "", "Go json omitempty rule: nullable | defaults | all")
+	c.Flags().StringVar(&flagValidators, "validators", "", "TS runtime validators: zod")
+	c.Flags().StringSliceVar(&flagInclude, "include-tables", nil, "allowlist patterns (repeatable)")
+	c.Flags().StringSliceVar(&flagExclude, "exclude-tables", nil, "denylist patterns (repeatable)")
+	c.Flags().StringSliceVar(&flagExcludeSch, "exclude-schemas", nil, "schemas to skip entirely (repeatable)")
+	c.Flags().BoolVar(&flagBranded, "branded-ids", false, "TS: emit branded ID types (UserId = bigint & {__brand})")
+	c.Flags().BoolVar(&flagInsertUpdt, "insert-update-helpers", false, "TS: emit Insert<T> + Update<T> partial helpers")
+	c.Flags().StringVar(&flagReadonly, "readonly", "", "mark readonly columns: identity | generated | defaults | all")
+
+	c.AddCommand(cmdGenInit())
+	return c
+}
+
+// cmdGenInit scaffolds a default .pg-flux-codegen.yml with every option
+// documented in-line so users can keep what they need.
+func cmdGenInit() *cobra.Command {
+	var (
+		path  string
+		force bool
+	)
+	c := &cobra.Command{
+		Use:   "init",
+		Short: "Scaffold a default .pg-flux-codegen.yml with every option documented",
+		Long: "Writes a commented config file showing every per-output option pg-flux\n" +
+			"supports. Edit it down to the outputs and options you need.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := codegen.WriteDefaultConfig(path, force); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s\n", path)
+			return nil
+		},
+	}
+	c.Flags().StringVar(&path, "out", ".pg-flux-codegen.yml", "destination file")
+	c.Flags().BoolVar(&force, "force", false, "overwrite an existing file")
 	return c
 }
 

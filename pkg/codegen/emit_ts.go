@@ -7,7 +7,10 @@ import (
 	"github.com/nexg/pg-flux/pkg/schema"
 )
 
-// TSGenerator emits TypeScript interface and type-alias definitions.
+// TSGenerator emits TypeScript type definitions. Every shape decision (null
+// style, column case, enum style, branded IDs, readonly markers, Insert/Update
+// helpers, bigint/Date mapping, zod validators) is driven by EmitOptions so
+// the same emitter can produce idiomatic output for any TS stack.
 type TSGenerator struct {
 	NameOverrides map[string]string
 }
@@ -16,44 +19,65 @@ func NewTSGenerator() *TSGenerator { return &TSGenerator{} }
 
 func (g *TSGenerator) Lang() Language { return LangTypeScript }
 
-// Generate emits one file per object kind plus an index.ts barrel that re-
-// exports everything for easy "import { User } from 'dbgen'" consumption.
 func (g *TSGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet, error) {
 	if s == nil {
 		return FileSet{}, nil
 	}
-	tm := opts.TypeMap
-	if tm == nil {
-		tm = &TSTypeMap{}
+	opts.Emit.normalize()
+	// Apply filtering before any rendering so emitters see only allowed objects.
+	s = opts.Emit.Filter.ApplyToState(s)
+
+	// Type map honours bigint_as / date_as.
+	var ttm *TSTypeMap
+	if opts.TypeMap == nil {
+		ttm = &TSTypeMap{}
+		opts.TypeMap = ttm
+	} else if existing, ok := opts.TypeMap.(*TSTypeMap); ok {
+		ttm = existing
 	}
-	if ttm, ok := tm.(*TSTypeMap); ok {
+	if ttm != nil {
+		if ttm.BigintAs == "" {
+			ttm.BigintAs = opts.Emit.BigintAs
+		}
+		if ttm.DateAs == "" {
+			ttm.DateAs = opts.Emit.DateAs
+		}
 		ttm.CustomTypes = g.collectCustomTypes(s)
 	}
+
 	out := FileSet{}
 	hasTables := false
 	hasEnums := false
 	hasTypes := false
 	hasViews := false
+	hasBranded := false
 
-	if b, ok := g.emitTables(s, tm); ok {
+	if b, branded, ok := g.emitTables(s, opts); ok {
 		out["tables.ts"] = []byte(g.fileHeader() + b)
 		hasTables = true
+		if branded != "" {
+			out["brands.ts"] = []byte(g.fileHeader() + branded)
+			hasBranded = true
+		}
 	}
-	if b, ok := g.emitEnums(s); ok {
+	if b, ok := g.emitEnums(s, opts); ok {
 		out["enums.ts"] = []byte(g.fileHeader() + b)
 		hasEnums = true
 	}
-	if b, ok := g.emitTypes(s, tm); ok {
+	if b, ok := g.emitTypes(s, opts); ok {
 		out["types.ts"] = []byte(g.fileHeader() + b)
 		hasTypes = true
 	}
-	if b, ok := g.emitViews(s, tm); ok {
+	if b, ok := g.emitViews(s, opts); ok {
 		out["views.ts"] = []byte(g.fileHeader() + b)
 		hasViews = true
 	}
 
 	if hasTables || hasEnums || hasTypes || hasViews {
-		out["index.ts"] = []byte(g.barrel(hasTables, hasEnums, hasTypes, hasViews))
+		out["index.ts"] = []byte(g.barrel(hasTables, hasEnums, hasTypes, hasViews, hasBranded, opts.Emit.Validators == "zod"))
+	}
+	if opts.Emit.Validators == "zod" && (hasTables || hasEnums || hasTypes) {
+		out["validators.ts"] = []byte(g.fileHeader() + emitZodValidators(s, opts, g))
 	}
 	return out, nil
 }
@@ -63,11 +87,11 @@ func (g *TSGenerator) fileHeader() string {
 		"// To regenerate, run: pg-flux gen\n\n"
 }
 
-func (g *TSGenerator) barrel(tbl, enum, typ, view bool) string {
+func (g *TSGenerator) barrel(tbl, enum, typ, view, branded, validators bool) string {
 	var b strings.Builder
 	b.WriteString(g.fileHeader())
-	if tbl {
-		b.WriteString("export * from './tables';\n")
+	if branded {
+		b.WriteString("export * from './brands';\n")
 	}
 	if enum {
 		b.WriteString("export * from './enums';\n")
@@ -75,47 +99,16 @@ func (g *TSGenerator) barrel(tbl, enum, typ, view bool) string {
 	if typ {
 		b.WriteString("export * from './types';\n")
 	}
+	if tbl {
+		b.WriteString("export * from './tables';\n")
+	}
 	if view {
 		b.WriteString("export * from './views';\n")
 	}
+	if validators {
+		b.WriteString("export * from './validators';\n")
+	}
 	return b.String()
-}
-
-// collectCustomTypes is the TS equivalent of GoGenerator.collectCustomTypes.
-func (g *TSGenerator) collectCustomTypes(s *schema.SchemaState) map[string]string {
-	if s == nil {
-		return nil
-	}
-	out := map[string]string{}
-	for k := range s.EnumValues {
-		parts := strings.SplitN(k, ".", 2)
-		var sch, n string
-		if len(parts) == 2 {
-			sch, n = parts[0], parts[1]
-		} else {
-			sch, n = "public", parts[0]
-		}
-		ident := g.typeName(sch, n)
-		out[k] = ident
-		out[n] = ident
-	}
-	for k, ct := range s.CompositeTypes {
-		if ct == nil {
-			continue
-		}
-		ident := g.typeName(ct.Schema, ct.Name)
-		out[k] = ident
-		out[ct.Name] = ident
-	}
-	for k, d := range s.Domains {
-		if d == nil {
-			continue
-		}
-		ident := g.typeName(d.Schema, d.Name)
-		out[k] = ident
-		out[d.Name] = ident
-	}
-	return out
 }
 
 func (g *TSGenerator) typeName(schName, objName string) string {
@@ -131,11 +124,16 @@ func (g *TSGenerator) typeName(schName, objName string) string {
 	return PascalCaseInit(Singular(objName))
 }
 
-func (g *TSGenerator) emitTables(s *schema.SchemaState, tm TypeMap) (string, bool) {
+// emitTables returns (tablesBody, brandsBody, ok). brandsBody is non-empty
+// when BrandedIDs is enabled and at least one branded type was emitted.
+func (g *TSGenerator) emitTables(s *schema.SchemaState, opts Options) (string, string, bool) {
 	if len(s.Tables) == 0 {
-		return "", false
+		return "", "", false
 	}
 	var b strings.Builder
+	var brands strings.Builder
+	brandedDecls := map[string]bool{}
+
 	for _, k := range SortedKeys(s.Tables) {
 		t := s.Tables[k]
 		if t == nil {
@@ -148,28 +146,105 @@ func (g *TSGenerator) emitTables(s *schema.SchemaState, tm TypeMap) (string, boo
 			if c == nil {
 				continue
 			}
-			hints := ParseCommentHints(c.Comment)
-			if hints.Doc != "" {
-				fmt.Fprintf(&b, "  /** %s */\n", hints.Doc)
-			}
-			var typeExpr string
-			if override, ok := hints.Overrides["tstype"]; ok {
-				if !c.NotNull {
-					typeExpr = override + " | null"
-				} else {
-					typeExpr = override
-				}
-			} else {
-				typeExpr, _ = tm.Map(c.TypeSQL, !c.NotNull)
-			}
-			fmt.Fprintf(&b, "  %s: %s;\n", c.Name, typeExpr)
+			g.emitColumn(&b, t, c, opts, typeName, brandedDecls, &brands)
 		}
 		b.WriteString("}\n\n")
+
+		if opts.Emit.InsertUpdateHelpers {
+			g.emitInsertUpdateHelpers(&b, t, typeName, opts.Emit)
+		}
 	}
-	return b.String(), true
+	return b.String(), brands.String(), true
 }
 
-func (g *TSGenerator) emitEnums(s *schema.SchemaState) (string, bool) {
+// emitColumn writes one interface property. Handles readonly, null style,
+// branded IDs, JSON shapes, and per-column comment overrides.
+func (g *TSGenerator) emitColumn(b *strings.Builder, t *schema.Table, c *schema.Column, opts Options, typeName string, branded map[string]bool, brands *strings.Builder) {
+	hints := ParseCommentHints(c.Comment)
+	if hints.Doc != "" {
+		fmt.Fprintf(b, "  /** %s */\n", hints.Doc)
+	}
+	// Resolve the type expression.
+	var typeExpr string
+	if override, ok := hints.Overrides["tstype"]; ok {
+		if !c.NotNull {
+			typeExpr = override + " | null"
+		} else {
+			typeExpr = override
+		}
+	} else if shape := opts.Emit.jsonShapeFor(t.Schema, t.Name, c.Name); shape != "" {
+		typeExpr = shape
+		if !c.NotNull {
+			typeExpr += " | null"
+		}
+	} else {
+		typeExpr, _ = opts.TypeMap.Map(c.TypeSQL, !c.NotNull)
+	}
+	// Branded ID: only for single-column PK pointing to bigint-ish/uuid type.
+	if opts.Emit.BrandedIDs && c.IsPrimaryKey {
+		brand := typeName + "Id"
+		if !branded[brand] {
+			branded[brand] = true
+			brandBase := stripNullableSuffix(typeExpr)
+			fmt.Fprintf(brands, "export type %s = %s & { readonly __brand: \"%s\" };\n",
+				brand, brandBase, brand)
+		}
+		// Replace the column's type with the branded form.
+		typeExpr = applyNullable(brand, !c.NotNull, opts.Emit.NullStyle, false)
+	}
+	// Field naming.
+	key := opts.Emit.ApplyColumnCase(c.Name)
+	// Readonly + null style determine the property header.
+	readonly := isReadonly(c, opts.Emit.Readonly)
+	header := key
+	if readonly {
+		header = "readonly " + key
+	}
+	// NullStyle: union (default), undefined, optional.
+	nullable := !c.NotNull
+	suffix := ":"
+	switch opts.Emit.NullStyle {
+	case "optional":
+		if nullable {
+			suffix = "?:"
+			typeExpr = stripNullSuffix(typeExpr)
+		}
+	case "undefined":
+		if nullable {
+			typeExpr = stripNullSuffix(typeExpr) + " | undefined"
+		}
+	}
+	fmt.Fprintf(b, "  %s%s %s;\n", header, suffix, typeExpr)
+}
+
+func (g *TSGenerator) emitInsertUpdateHelpers(b *strings.Builder, t *schema.Table, typeName string, eo EmitOptions) {
+	// Columns that are server-managed (identity / generated / DEFAULT) become
+	// optional in the Insert helper. Key names must match the EMITTED property
+	// names (column_case applied), not the raw column names — otherwise
+	// Pick<>/Omit<> refer to non-existent keys.
+	var optionalCols []string
+	for _, c := range t.Columns {
+		if c == nil {
+			continue
+		}
+		if c.Identity != "" || c.GeneratedKind != "" || c.DefaultSQL != "" || !c.NotNull {
+			optionalCols = append(optionalCols, fmt.Sprintf("%q", eo.ApplyColumnCase(c.Name)))
+		}
+	}
+	if len(optionalCols) == 0 {
+		fmt.Fprintf(b, "export type Insert%s = %s;\n", typeName, typeName)
+	} else {
+		fmt.Fprintf(b, "export type Insert%s = Omit<%s, %s> & Partial<Pick<%s, %s>>;\n",
+			typeName, typeName,
+			strings.Join(optionalCols, " | "),
+			typeName,
+			strings.Join(optionalCols, " | "),
+		)
+	}
+	fmt.Fprintf(b, "export type Update%s = Partial<%s>;\n\n", typeName, typeName)
+}
+
+func (g *TSGenerator) emitEnums(s *schema.SchemaState, opts Options) (string, bool) {
 	if len(s.EnumValues) == 0 {
 		return "", false
 	}
@@ -185,20 +260,38 @@ func (g *TSGenerator) emitEnums(s *schema.SchemaState) (string, bool) {
 		}
 		typeName := g.typeName(schName, name)
 		fmt.Fprintf(&b, "/** PG enum %s.%s */\n", schName, name)
-		fmt.Fprintf(&b, "export type %s =\n", typeName)
-		for i, v := range values {
-			suffix := ""
-			if i == len(values)-1 {
-				suffix = ";"
+		switch opts.Emit.EnumStyle {
+		case "const-object":
+			fmt.Fprintf(&b, "export const %s = {\n", typeName)
+			for _, v := range values {
+				key := PascalCaseInit(v)
+				fmt.Fprintf(&b, "  %s: %q,\n", key, v)
 			}
-			fmt.Fprintf(&b, "  | %q%s\n", v, suffix)
+			b.WriteString("} as const;\n")
+			fmt.Fprintf(&b, "export type %s = (typeof %s)[keyof typeof %s];\n\n", typeName, typeName, typeName)
+		case "ts-enum":
+			fmt.Fprintf(&b, "export enum %s {\n", typeName)
+			for _, v := range values {
+				key := PascalCaseInit(v)
+				fmt.Fprintf(&b, "  %s = %q,\n", key, v)
+			}
+			b.WriteString("}\n\n")
+		default: // "union"
+			fmt.Fprintf(&b, "export type %s =\n", typeName)
+			for i, v := range values {
+				suffix := ""
+				if i == len(values)-1 {
+					suffix = ";"
+				}
+				fmt.Fprintf(&b, "  | %q%s\n", v, suffix)
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	}
 	return b.String(), true
 }
 
-func (g *TSGenerator) emitTypes(s *schema.SchemaState, tm TypeMap) (string, bool) {
+func (g *TSGenerator) emitTypes(s *schema.SchemaState, opts Options) (string, bool) {
 	if len(s.CompositeTypes) == 0 && len(s.Domains) == 0 {
 		return "", false
 	}
@@ -212,8 +305,9 @@ func (g *TSGenerator) emitTypes(s *schema.SchemaState, tm TypeMap) (string, bool
 		writeTSDoc(&b, ct.Comment, fmt.Sprintf("Composite type %s.%s.", ct.Schema, ct.Name))
 		fmt.Fprintf(&b, "export interface %s {\n", typeName)
 		for _, a := range ct.Attributes {
-			typeExpr, _ := tm.Map(a.Type, false)
-			fmt.Fprintf(&b, "  %s: %s;\n", a.Name, typeExpr)
+			typeExpr, _ := opts.TypeMap.Map(a.Type, false)
+			key := opts.Emit.ApplyColumnCase(a.Name)
+			fmt.Fprintf(&b, "  %s: %s;\n", key, typeExpr)
 		}
 		b.WriteString("}\n\n")
 	}
@@ -223,14 +317,14 @@ func (g *TSGenerator) emitTypes(s *schema.SchemaState, tm TypeMap) (string, bool
 			continue
 		}
 		typeName := g.typeName(d.Schema, d.Name)
-		baseExpr, _ := tm.Map(d.BaseType, false)
+		baseExpr, _ := opts.TypeMap.Map(d.BaseType, false)
 		fmt.Fprintf(&b, "/** Domain %s.%s over %s. */\n", d.Schema, d.Name, d.BaseType)
 		fmt.Fprintf(&b, "export type %s = %s;\n\n", typeName, baseExpr)
 	}
 	return b.String(), true
 }
 
-func (g *TSGenerator) emitViews(s *schema.SchemaState, tm TypeMap) (string, bool) {
+func (g *TSGenerator) emitViews(s *schema.SchemaState, opts Options) (string, bool) {
 	if len(s.Views) == 0 {
 		return "", false
 	}
@@ -269,4 +363,81 @@ func writeTSDoc(b *strings.Builder, comment, fallback string) {
 		fmt.Fprintf(b, " * %s\n", strings.TrimSpace(line))
 	}
 	b.WriteString(" */\n")
+}
+
+// stripNullSuffix removes a trailing " | null" so the emitter can re-apply the
+// nullable form per NullStyle.
+func stripNullSuffix(s string) string {
+	return strings.TrimSuffix(s, " | null")
+}
+
+// stripNullableSuffix is the same idea for branded-ID type expressions, which
+// might already have the | null appended by the typemap.
+func stripNullableSuffix(s string) string { return stripNullSuffix(s) }
+
+// applyNullable re-applies the configured null style to a base type.
+func applyNullable(base string, nullable bool, style string, isOptional bool) string {
+	if !nullable {
+		return base
+	}
+	switch style {
+	case "optional":
+		return base
+	case "undefined":
+		return base + " | undefined"
+	}
+	return base + " | null"
+}
+
+// isReadonly reports whether a column should be marked readonly per policy.
+func isReadonly(c *schema.Column, policy ReadonlyPolicy) bool {
+	switch policy {
+	case ReadonlyAll:
+		return true
+	case ReadonlyIdentity:
+		return c.Identity != ""
+	case ReadonlyGenerated:
+		return c.GeneratedKind != ""
+	case ReadonlyDefaults:
+		return c.Identity != "" || c.GeneratedKind != "" || c.DefaultSQL != ""
+	}
+	return false
+}
+
+// collectCustomTypes builds the user-defined-type → generated-identifier map
+// so the typemap can resolve column refs to enums/composites/domains.
+func (g *TSGenerator) collectCustomTypes(s *schema.SchemaState) map[string]string {
+	if s == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for k := range s.EnumValues {
+		parts := strings.SplitN(k, ".", 2)
+		var sch, n string
+		if len(parts) == 2 {
+			sch, n = parts[0], parts[1]
+		} else {
+			sch, n = "public", parts[0]
+		}
+		ident := g.typeName(sch, n)
+		out[k] = ident
+		out[n] = ident
+	}
+	for k, ct := range s.CompositeTypes {
+		if ct == nil {
+			continue
+		}
+		ident := g.typeName(ct.Schema, ct.Name)
+		out[k] = ident
+		out[ct.Name] = ident
+	}
+	for k, d := range s.Domains {
+		if d == nil {
+			continue
+		}
+		ident := g.typeName(d.Schema, d.Name)
+		out[k] = ident
+		out[d.Name] = ident
+	}
+	return out
 }

@@ -6,11 +6,20 @@ package codegen
 type TSTypeMap struct {
 	Overrides   map[string]string // pg type → TS type expression
 	CustomTypes map[string]string // PG user-defined types → generated TS identifier (see GoTypeMap.CustomTypes)
+	// BigintAs overrides the default mapping for bigint / int8 / bigserial.
+	// "bigint" (default), "number", "string".
+	BigintAs string
+	// DateAs overrides the default mapping for timestamp* / date / time.
+	// "Date" (default), "string", "temporal".
+	DateAs string
 }
 
 func (m *TSTypeMap) Map(pgType string, nullable bool) (string, []string) {
 	base := m.base(pgType)
 	if nullable {
+		// NullStyle is applied at the emitter level (because "optional" needs
+		// the `?:` to land on the property, not the type). Here we always
+		// return the union form; the TS emitter rewrites if needed.
 		return base + " | null", nil
 	}
 	return base, nil
@@ -39,7 +48,7 @@ func (m *TSTypeMap) base(pgType string) string {
 			}
 		}
 	}
-	base := tsBaseDefault(t)
+	base := m.tsBaseDefault(t)
 	if isArray {
 		base = base + "[]"
 	}
@@ -47,16 +56,24 @@ func (m *TSTypeMap) base(pgType string) string {
 }
 
 // tsBaseDefault is the same idea as goBaseDefault but for TS native types.
-// Default fall-through is "string" because TS treats unknown columns as
-// strings until proven otherwise — safe and ESLint-friendly.
-func tsBaseDefault(pg string) string {
+// bigintAs and dateAs honour the user's TS preference; default fall-through is
+// "string" for unknown PG types — safe and ESLint-friendly.
+func (m *TSTypeMap) tsBaseDefault(pg string) string {
+	bigintAs := m.BigintAs
+	if bigintAs == "" {
+		bigintAs = "bigint"
+	}
+	dateAs := m.DateAs
+	if dateAs == "" {
+		dateAs = "Date"
+	}
 	switch pg {
 	case "smallint", "int2", "integer", "int", "int4", "real", "float4",
 		"double precision", "float8", "double", "smallserial", "serial2",
 		"serial", "serial4":
 		return "number"
 	case "bigint", "int8", "bigserial", "serial8":
-		return "bigint"
+		return bigintAs
 	case "boolean", "bool":
 		return "boolean"
 	case "text", "varchar", "character varying", "char", "character", "name", "citext", "uuid":
@@ -68,10 +85,8 @@ func tsBaseDefault(pg string) string {
 	case "timestamp", "timestamp without time zone", "timestamptz",
 		"timestamp with time zone", "date", "time", "time without time zone",
 		"timetz", "time with time zone":
-		return "Date"
+		return tsDateExpr(dateAs)
 	case "interval":
-		// No native interval type in JS; users override to a library type
-		// or keep as string (PG-formatted "1 day 02:03:04").
 		return "string"
 	case "numeric", "decimal":
 		return "string"
@@ -79,4 +94,15 @@ func tsBaseDefault(pg string) string {
 		return "string"
 	}
 	return "string"
+}
+
+// tsDateExpr returns the TS expression for the configured date_as mode.
+func tsDateExpr(dateAs string) string {
+	switch dateAs {
+	case "string":
+		return "string"
+	case "temporal":
+		return "Temporal.Instant"
+	}
+	return "Date"
 }
