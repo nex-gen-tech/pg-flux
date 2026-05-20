@@ -9,9 +9,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nexg/pg-flux/pkg/obs"
 	"github.com/nexg/pg-flux/pkg/shadow"
 )
 
@@ -123,6 +125,10 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 					schemas = []string{"public"}
 				}
 				if err := checkBaselineDrift(ctx, pool, schemas, base, content); err != nil {
+					obs.ErrorCtx(ctx, "migrate.drift_detected",
+						"file", base,
+						"error", err.Error(),
+					)
 					return nil, err
 				}
 			}
@@ -145,13 +151,27 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 		}
 
 		logf(opts.Progress, "apply %s ...\n", base)
+		start := time.Now()
 		if err := applyOne(ctx, pool, opts.TrackingSchema, base, content, chk); err != nil {
+			obs.ErrorCtx(ctx, "migrate.apply.failed",
+				"file", base,
+				"error", err.Error(),
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
 			return nil, fmt.Errorf("apply %s: %w", base, err)
 		}
 		res.Applied = append(res.Applied, base)
 		logf(opts.Progress, "      ok\n")
+		obs.InfoCtx(ctx, "migrate.applied",
+			"file", base,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 	}
 
+	obs.InfoCtx(ctx, "migrate.apply.summary",
+		"applied_count", len(res.Applied),
+		"skipped_count", len(res.Skipped),
+	)
 	return res, nil
 }
 

@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nexg/pg-flux/pkg/obs"
 	"github.com/nexg/pg-flux/pkg/plan"
 )
 
@@ -104,10 +106,24 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, p *plan.ExecutionPlan, o Opt
 			if o.Progress != nil {
 				fmt.Fprintf(o.Progress, "[%d] %s\n", s.ID, s.DDL)
 			}
+			stmtStart := time.Now()
 			if _, err := c.Exec(ctx, s.DDL); err != nil {
+				obs.ErrorCtx(ctx, "exec.statement.failed",
+					"statement_id", s.ID,
+					"op_type", s.OpType,
+					"object", s.Object,
+					"error", err.Error(),
+					"duration_ms", time.Since(stmtStart).Milliseconds(),
+				)
 				_, _ = c.Exec(ctx, "ROLLBACK")
 				return fmt.Errorf("statement %d: %w", s.ID, err)
 			}
+			obs.DebugCtx(ctx, "exec.statement.executed",
+				"statement_id", s.ID,
+				"op_type", s.OpType,
+				"object", s.Object,
+				"duration_ms", time.Since(stmtStart).Milliseconds(),
+			)
 		}
 		if _, err := c.Exec(ctx, "COMMIT"); err != nil {
 			return err
@@ -130,9 +146,23 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, p *plan.ExecutionPlan, o Opt
 			if o.Progress != nil {
 				fmt.Fprintf(o.Progress, "[%d] %s (concurrent)\n", s.ID, s.DDL)
 			}
+			stmtStart := time.Now()
 			if _, err := c.Exec(ctx, s.DDL); err != nil {
+				obs.ErrorCtx(ctx, "exec.concurrent_statement.failed",
+					"statement_id", s.ID,
+					"op_type", s.OpType,
+					"object", s.Object,
+					"error", err.Error(),
+					"duration_ms", time.Since(stmtStart).Milliseconds(),
+				)
 				return fmt.Errorf("concurrent statement %d: %w", s.ID, err)
 			}
+			obs.DebugCtx(ctx, "exec.concurrent_statement.executed",
+				"statement_id", s.ID,
+				"op_type", s.OpType,
+				"object", s.Object,
+				"duration_ms", time.Since(stmtStart).Milliseconds(),
+			)
 		}
 	}
 	return nil

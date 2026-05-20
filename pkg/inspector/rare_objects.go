@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nexg/pg-flux/pkg/obs"
 	"github.com/nexg/pg-flux/pkg/schema"
 )
 
@@ -18,25 +19,42 @@ import (
 // currently produce structured ALTER for them. Source CREATE statements still
 // apply via ExtraDDL/MiscObject pass-through.
 //
-// Errors on any single query are tolerated silently (some require superuser).
+// Errors on any single query are tolerated (some require superuser), but they
+// are now surfaced via obs.Warn so operators can see when a kind was skipped
+// rather than the previous silent swallow.
 func loadRareObjects(ctx context.Context, pool *pgxpool.Pool, st *schema.SchemaState, schemas []string) error {
 	if pool == nil || st == nil {
 		return nil
 	}
-	_ = loadOperators(ctx, pool, st, schemas)
-	_ = loadOperatorClasses(ctx, pool, st, schemas)
-	_ = loadOperatorFamilies(ctx, pool, st, schemas)
-	_ = loadTextSearchConfigs(ctx, pool, st, schemas)
-	_ = loadTextSearchDicts(ctx, pool, st, schemas)
-	_ = loadTextSearchParsers(ctx, pool, st, schemas)
-	_ = loadTextSearchTemplates(ctx, pool, st, schemas)
-	_ = loadCasts(ctx, pool, st)
-	_ = loadConversions(ctx, pool, st, schemas)
-	_ = loadTransforms(ctx, pool, st)
-	_ = loadLanguages(ctx, pool, st)
-	_ = loadAccessMethods(ctx, pool, st)
-	_ = loadTablespaces(ctx, pool, st)
+	tryLoad(ctx, "operators", func() error { return loadOperators(ctx, pool, st, schemas) })
+	tryLoad(ctx, "operator_classes", func() error { return loadOperatorClasses(ctx, pool, st, schemas) })
+	tryLoad(ctx, "operator_families", func() error { return loadOperatorFamilies(ctx, pool, st, schemas) })
+	tryLoad(ctx, "text_search_configs", func() error { return loadTextSearchConfigs(ctx, pool, st, schemas) })
+	tryLoad(ctx, "text_search_dicts", func() error { return loadTextSearchDicts(ctx, pool, st, schemas) })
+	tryLoad(ctx, "text_search_parsers", func() error { return loadTextSearchParsers(ctx, pool, st, schemas) })
+	tryLoad(ctx, "text_search_templates", func() error { return loadTextSearchTemplates(ctx, pool, st, schemas) })
+	tryLoad(ctx, "casts", func() error { return loadCasts(ctx, pool, st) })
+	tryLoad(ctx, "conversions", func() error { return loadConversions(ctx, pool, st, schemas) })
+	tryLoad(ctx, "transforms", func() error { return loadTransforms(ctx, pool, st) })
+	tryLoad(ctx, "languages", func() error { return loadLanguages(ctx, pool, st) })
+	tryLoad(ctx, "access_methods", func() error { return loadAccessMethods(ctx, pool, st) })
+	tryLoad(ctx, "tablespaces", func() error { return loadTablespaces(ctx, pool, st) })
 	return nil
+}
+
+// tryLoad invokes fn and surfaces any error via obs.Warn rather than the
+// previous silent-swallow with `_ = ...`. Inspector callers downstream still
+// receive a (possibly partial) SchemaState — pg-flux deliberately tolerates
+// permission errors on the rare-object catalog queries (e.g. pg_subscription
+// requires superuser; tablespaces require pg_read_all_settings on PG14-) but
+// operators want to see when a kind was skipped.
+func tryLoad(ctx context.Context, kind string, fn func() error) {
+	if err := fn(); err != nil {
+		obs.WarnCtx(ctx, "inspector.rare_object_load_failed",
+			"kind", kind,
+			"error", err.Error(),
+		)
+	}
 }
 
 func loadOperators(ctx context.Context, pool *pgxpool.Pool, st *schema.SchemaState, schemas []string) error {

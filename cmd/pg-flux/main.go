@@ -20,6 +20,7 @@ import (
 	"github.com/nexg/pg-flux/pkg/hashstate"
 	"github.com/nexg/pg-flux/pkg/inspector"
 	"github.com/nexg/pg-flux/pkg/migrate"
+	"github.com/nexg/pg-flux/pkg/obs"
 	"github.com/nexg/pg-flux/pkg/plan"
 	"github.com/nexg/pg-flux/pkg/render"
 	"github.com/nexg/pg-flux/pkg/schema"
@@ -40,10 +41,12 @@ var (
 	validatePlpgsqlF bool
 	validateSQLF     bool
 	appendValidateF  bool
-	reltupleThresh   float64
-	autoNotValidF    bool
-	allowMassDrop    bool
+	reltupleThresh    float64
+	autoNotValidF     bool
+	allowMassDrop     bool
 	massDropThreshold float64
+	logFormat         string
+	verbose           bool
 	shadowDSN        string
 	shadowSemanticF  bool
 	shadowEquivF     bool
@@ -108,6 +111,8 @@ func newRoot() *cobra.Command {
 	r.PersistentFlags().Float64Var(&reltupleThresh, "set-not-null-reltuple-hint", 10000, "rows above which SET NOT NULL is rewritten to the 4-step safe pattern (PRD P3-15; 0 disables)")
 	r.PersistentFlags().BoolVar(&allowMassDrop, "allow-mass-drop", false, "permit migrations that drop >25% of live tables/views/sequences (guards against an empty --schema wiping a non-empty DB)")
 	r.PersistentFlags().Float64Var(&massDropThreshold, "mass-drop-threshold", 25, "percentage of live objects above which mass-drop guard trips; ignored with --allow-mass-drop")
+	r.PersistentFlags().StringVar(&logFormat, "log-format", "text", "structured log output format: text (default, human-readable) or json (one event per line, machine-parseable)")
+	r.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable debug-level structured logging (per-statement events, timing details)")
 	r.PersistentFlags().StringVar(&shadowDSN, "shadow-dsn", os.Getenv("PGFLUX_SHADOW_DSN"), "optional disposable DB DSN for shadow validation (see --shadow-semantic, --shadow-equivalence)")
 	r.PersistentFlags().BoolVar(&shadowSemanticF, "shadow-semantic", false, "if set with --shadow-dsn, apply the plan with autocommit on that DB (mutates DB — use disposable instance; stronger than rolled-back syntax check)")
 	r.PersistentFlags().BoolVar(&shadowEquivF, "shadow-equivalence", false, "with --shadow-dsn, run semantic apply on an empty shadow DB then require inspected catalog to match desired (structural check; not a formal proof vs production)")
@@ -115,6 +120,8 @@ func newRoot() *cobra.Command {
 	r.PersistentFlags().StringVar(&migrationsDir, "migrations-dir", "./migrations", "directory for migration .sql files")
 	r.PersistentFlags().StringVar(&trackingSchema, "tracking-schema", "_pgflux", "schema used to track applied migrations")
 	r.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		// Init structured logging BEFORE any other work so even early-returns get logged.
+		obs.Init(obs.Format(logFormat), verbose, cmd.ErrOrStderr())
 		cfg, err := loadConfig(configFile)
 		if err != nil {
 			return err
