@@ -157,13 +157,19 @@ func ParseCommentHints(comment string) CommentHints {
 	return h
 }
 
-// tokenizeCommentHints splits a hint string on whitespace, treating "..." or
-// '...' quoted runs as single tokens so a quoted Go type with parens etc.
-// stays atomic.
+// tokenizeCommentHints splits a hint string on whitespace, treating quoted
+// runs ("...", '...') AND balanced bracket groups ({...}, [...], (...)) as
+// atomic. This lets users write complex TS or Go type expressions inline
+// without quoting:
+//
+//	pg-flux: tstype={ source: string; ip?: string } gotype=map[string]int
+//
+// Without balancing, each space inside the braces would split the value.
 func tokenizeCommentHints(s string) []string {
 	var out []string
 	var cur strings.Builder
 	inQuote := byte(0)
+	depth := 0
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
@@ -173,8 +179,19 @@ func tokenizeCommentHints(s string) []string {
 				continue
 			}
 			cur.WriteByte(c)
+		case depth > 0:
+			cur.WriteByte(c)
+			switch c {
+			case '{', '[', '(':
+				depth++
+			case '}', ']', ')':
+				depth--
+			}
 		case c == '"' || c == '\'':
 			inQuote = c
+		case c == '{' || c == '[' || c == '(':
+			cur.WriteByte(c)
+			depth = 1
 		case c == ' ' || c == '\t' || c == '\n':
 			if cur.Len() > 0 {
 				out = append(out, cur.String())

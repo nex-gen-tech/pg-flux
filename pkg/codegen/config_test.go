@@ -100,3 +100,36 @@ func TestTokenizeCommentHints_emptyAndQuotes(t *testing.T) {
 		t.Errorf("tokens: %v", got)
 	}
 }
+
+func TestTokenizeCommentHints_balancedBraces(t *testing.T) {
+	// Complex TS object type with spaces inside braces must stay atomic.
+	got := tokenizeCommentHints(`tstype={ source: string; ip?: string } gotype=int`)
+	want := []string{"tstype={ source: string; ip?: string }", "gotype=int"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("balanced-brace tokenization: %v", got)
+	}
+}
+
+func TestTokenizeCommentHints_balancedBrackets(t *testing.T) {
+	got := tokenizeCommentHints(`gotype=map[string]int other=1`)
+	want := []string{"gotype=map[string]int", "other=1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("bracketed type tokenization: %v", got)
+	}
+}
+
+func TestTokenizeCommentHints_nestedGroups(t *testing.T) {
+	got := tokenizeCommentHints(`tstype=Array<{ k: string; v: number }>`)
+	want := []string{"tstype=Array<{ k: string; v: number }>"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("nested grouping: %v", got)
+	}
+}
+
+func TestParseCommentHints_complexTSType(t *testing.T) {
+	h := ParseCommentHints(`pg-flux: tstype={ source: string; ip?: string }`)
+	got, ok := h.Overrides["tstype"]
+	if !ok || got != "{ source: string; ip?: string }" {
+		t.Errorf("expected full TS object expression, got %q", got)
+	}
+}
