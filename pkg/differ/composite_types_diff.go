@@ -2,7 +2,6 @@ package differ
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/nexg/pg-flux/pkg/plan"
 	"github.com/nexg/pg-flux/pkg/schema"
@@ -82,7 +81,8 @@ func diffCompositeAttrs(d, l *schema.CompositeType) []change {
 			})
 			continue
 		}
-		if !strings.EqualFold(da.Type, l.Attributes[li].Type) {
+		// Normalize types so varchar(10) ≡ pg_catalog.varchar(10) ≡ character varying(10).
+		if normType(da.Type) != normType(l.Attributes[li].Type) {
 			out = append(out, change{
 				kind:   plan.ChangeRawSQL,
 				rawSQL: fmt.Sprintf("ALTER TYPE %s ALTER ATTRIBUTE %s SET DATA TYPE %s", qual, ident(da.Name), da.Type),

@@ -241,10 +241,20 @@ func createStmtDefFingerprint(s string) string {
 	// sides would lose precision here, but views of that shape are uncommon and
 	// users can disambiguate via AS aliases.)
 	dep = reViewColQualifier.ReplaceAllString(dep, "$1")
+	// pg_get_viewdef rewrites WHERE x IN (a, b) → x = ANY (ARRAY[a, b]). Source-side
+	// deparse preserves "IN (...)". Collapse the live form back to IN-list for the
+	// fingerprint.
+	dep = reAnyArrayInList.ReplaceAllString(dep, " in ($1)")
 	// Trailing semicolon, redundant whitespace.
 	dep = strings.TrimSuffix(strings.TrimSpace(dep), ";")
 	return strings.TrimSpace(reMultiSpace.ReplaceAllString(dep, " "))
 }
+
+// reAnyArrayInList canonicalises PostgreSQL's "= ANY (ARRAY[...])" into "IN (...)".
+// pg_get_viewdef rewrites IN-lists this way; pg_query.Deparse preserves the original
+// form, so without this normalization source ("IN") and live ("= ANY (ARRAY[...])")
+// don't fingerprint identically.
+var reAnyArrayInList = regexp.MustCompile(`\s*=\s*any\s*\(\s*array\s*\[\s*([^\]]+?)\s*\]\s*\)`)
 
 // reViewColQualifier strips "tablename." prefixes off column refs in view bodies.
 // Anchored to a leading SELECT-area token boundary so FROM table.column doesn't
