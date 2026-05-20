@@ -21,7 +21,7 @@ func TestBuildMigrationSQL_transactionWrapping(t *testing.T) {
 			{ID: 1, OpType: "ADD_COLUMN", Object: "public.t.c", DDL: "ALTER TABLE public.t ADD COLUMN c text"},
 		},
 	}
-	sql := buildMigrationSQL(p)
+	sql := buildMigrationSQL(p, "")
 	require.Contains(t, sql, "BEGIN;")
 	require.Contains(t, sql, "COMMIT;")
 	idx := func(s string) int { return strings.Index(sql, s) }
@@ -38,7 +38,7 @@ func TestBuildMigrationSQL_concurrentAfterCommit(t *testing.T) {
 			{ID: 2, OpType: "CREATE_INDEX", Object: "public.idx", DDL: "CREATE INDEX CONCURRENTLY idx ON public.t (c)", IsConcurrent: true},
 		},
 	}
-	sql := buildMigrationSQL(p)
+	sql := buildMigrationSQL(p, "")
 	require.Contains(t, sql, "BEGIN;")
 	require.Contains(t, sql, "COMMIT;")
 	require.Contains(t, sql, "CONCURRENTLY")
@@ -56,7 +56,7 @@ func TestBuildMigrationSQL_advisoryOnly(t *testing.T) {
 				Hazards: []hazard.Detected{{Severity: hazard.SeverityAdvisory, Type: hazard.ColumnReorder, Message: "advisory note"}}},
 		},
 	}
-	sql := buildMigrationSQL(p)
+	sql := buildMigrationSQL(p, "")
 	require.Contains(t, sql, "ADVISORY")
 	require.NotContains(t, sql, "BEGIN;", "advisory-only plan must not emit BEGIN/COMMIT")
 	require.NotContains(t, sql, "COMMIT;")
@@ -65,7 +65,7 @@ func TestBuildMigrationSQL_advisoryOnly(t *testing.T) {
 // TestBuildMigrationSQL_emptyPlan returns the header but no transaction block.
 func TestBuildMigrationSQL_emptyPlan(t *testing.T) {
 	p := &plan.ExecutionPlan{Statements: []plan.Statement{}}
-	sql := buildMigrationSQL(p)
+	sql := buildMigrationSQL(p, "")
 	require.NotContains(t, sql, "BEGIN;")
 	require.NotContains(t, sql, "COMMIT;")
 }
@@ -197,7 +197,7 @@ func TestBuildMigrationSQL_hazardComments(t *testing.T) {
 			},
 		},
 	}
-	sql := buildMigrationSQL(p)
+	sql := buildMigrationSQL(p, "")
 	require.Contains(t, sql, "[HAZARD")
 	require.Contains(t, sql, "cast failure")
 }

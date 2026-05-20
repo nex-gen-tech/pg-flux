@@ -29,6 +29,13 @@ type ApplyOptions struct {
 	ShadowDSN string
 	// Progress receives log lines (may be nil).
 	Progress io.Writer
+	// Schemas selects which schemas the inspector reads when performing the
+	// baseline-drift check. Defaults to ["public"] when empty.
+	Schemas []string
+	// ForceAfterDrift bypasses the baseline-hash drift check. The check refuses to
+	// apply when the live DB no longer matches the state the first pending migration
+	// was generated against. Default false: refuse on drift.
+	ForceAfterDrift bool
 }
 
 // ApplyResult summarises what was done.
@@ -75,6 +82,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 		}
 	}()
 
+	driftChecked := false
 	for _, fname := range files {
 		base := filepath.Base(fname)
 
@@ -101,6 +109,23 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 			logf(opts.Progress, "would apply  %s\n", base)
 			res.Applied = append(res.Applied, base)
 			continue
+		}
+
+		// Baseline-hash drift check: compare live state against the hash recorded
+		// at generate time in the FIRST pending migration's header. Subsequent
+		// migrations were generated against intermediate states we don't materialize,
+		// so we can't reliably check them here.
+		if !driftChecked {
+			driftChecked = true
+			if !opts.ForceAfterDrift {
+				schemas := opts.Schemas
+				if len(schemas) == 0 {
+					schemas = []string{"public"}
+				}
+				if err := checkBaselineDrift(ctx, pool, schemas, base, content); err != nil {
+					return nil, err
+				}
+			}
 		}
 
 		// Pre-flight shadow validation: apply in a rolled-back transaction on the shadow DB
