@@ -18,7 +18,117 @@ var reDefaultPublicSchemaDot = regexp.MustCompile(`(?i)\bpublic\.`)
 
 // reAnyArray matches a PostgreSQL catalog "= ANY(ARRAY[...::type, ...])" pattern produced
 // by pg_get_constraintdef for IN-list CHECK constraints.
+//
+// NOTE: this regex has a known limitation — it stops at the first `]` even when
+// it's inside a single-quoted string literal. Callers that need to handle
+// brackets inside literals (e.g. user values like 'a]b') should use
+// normalizeAnyArrayForFingerprint instead.
 var reAnyArray = regexp.MustCompile(`= any\(array\[([^\]]+)\]\)`)
+
+// normalizeAnyArrayForFingerprint rewrites every "= ANY (ARRAY[item, ...])"
+// construct in s to the equivalent "IN (item, ...)" form, walking the string
+// with quote-state awareness so that brackets inside single-quoted literals
+// don't terminate the match early. Type casts (::text, ::int4, etc.) on each
+// element are stripped — pg_get_constraintdef emits them but source SQL
+// typically doesn't. This is the quote-safe replacement for the legacy
+// reAnyArray/reAnyArrayInList regexes.
+func normalizeAnyArrayForFingerprint(s string) string {
+	lower := strings.ToLower(s)
+	var out strings.Builder
+	out.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		// Look for "= any (array[" allowing flexible whitespace.
+		idx := indexAnyArrayStart(lower, i)
+		if idx < 0 {
+			out.WriteString(s[i:])
+			break
+		}
+		out.WriteString(s[i:idx])
+		// Find the start of the `[` after array.
+		openBracket := strings.Index(lower[idx:], "[")
+		if openBracket < 0 {
+			out.WriteString(s[idx:])
+			break
+		}
+		openBracket += idx
+		// Walk forward respecting single-quoted strings until matching `]`.
+		closeBracket := -1
+		inQuote := false
+		for j := openBracket + 1; j < len(s); j++ {
+			c := s[j]
+			if c == '\'' {
+				if inQuote && j+1 < len(s) && s[j+1] == '\'' {
+					j++ // skip '' escape
+					continue
+				}
+				inQuote = !inQuote
+				continue
+			}
+			if inQuote {
+				continue
+			}
+			if c == ']' {
+				closeBracket = j
+				break
+			}
+		}
+		if closeBracket < 0 {
+			out.WriteString(s[idx:])
+			break
+		}
+		inner := s[openBracket+1 : closeBracket]
+		// Strip type casts on each element: 'foo'::text → 'foo'.
+		inner = reCastSuffix.ReplaceAllString(inner, "$1")
+		// Collapse whitespace.
+		inner = reMultiSpace.ReplaceAllString(inner, " ")
+		inner = strings.TrimSpace(inner)
+		out.WriteString(" IN (")
+		out.WriteString(inner)
+		out.WriteString(")")
+		// Skip past the closing `)` after `])`.
+		k := closeBracket + 1
+		for k < len(s) && (s[k] == ' ' || s[k] == '\t') {
+			k++
+		}
+		if k < len(s) && s[k] == ')' {
+			i = k + 1
+		} else {
+			i = closeBracket + 1
+		}
+	}
+	return out.String()
+}
+
+// indexAnyArrayStart finds the next "= any (array" occurrence in lower starting
+// at index from, allowing flexible whitespace between tokens. Returns the
+// position of the `=` character, or -1.
+func indexAnyArrayStart(lower string, from int) int {
+	for {
+		eq := strings.Index(lower[from:], "= any")
+		if eq < 0 {
+			return -1
+		}
+		eq += from
+		// Find "array" after "any", skipping whitespace and optional "(".
+		j := eq + len("= any")
+		for j < len(lower) && (lower[j] == ' ' || lower[j] == '\t') {
+			j++
+		}
+		if j >= len(lower) || lower[j] != '(' {
+			from = eq + 1
+			continue
+		}
+		j++
+		for j < len(lower) && (lower[j] == ' ' || lower[j] == '\t') {
+			j++
+		}
+		if j+5 <= len(lower) && lower[j:j+5] == "array" {
+			return eq
+		}
+		from = eq + 1
+	}
+}
 
 // reCastSuffix strips a trailing "::typename" cast from a quoted literal, e.g.  'pending'::text  → 'pending'.
 var reCastSuffix = regexp.MustCompile(`('+[^']*'+)::[a-z][a-z0-9 ]*`)
@@ -243,8 +353,9 @@ func createStmtDefFingerprint(s string) string {
 	dep = reViewColQualifier.ReplaceAllString(dep, "$1")
 	// pg_get_viewdef rewrites WHERE x IN (a, b) → x = ANY (ARRAY[a, b]). Source-side
 	// deparse preserves "IN (...)". Collapse the live form back to IN-list for the
-	// fingerprint.
-	dep = reAnyArrayInList.ReplaceAllString(dep, " in ($1)")
+	// fingerprint. Uses the quote-aware walker so brackets inside literal strings
+	// don't terminate the match early.
+	dep = strings.ToLower(normalizeAnyArrayForFingerprint(dep))
 	// Trailing semicolon, redundant whitespace.
 	dep = strings.TrimSuffix(strings.TrimSpace(dep), ";")
 	return strings.TrimSpace(reMultiSpace.ReplaceAllString(dep, " "))
@@ -514,42 +625,110 @@ func sortFunctionOptions(header string) string {
 // splitFunctionOptions splits the option cluster into atomic clauses, grouping
 // known multi-token clauses (PARALLEL SAFE, SECURITY DEFINER, COST n, ROWS n,
 // SET name TO value, NOT LEAKPROOF). Single-word options pass through.
+//
+// Tokenization is quote-aware: single-quoted string literals stay as one token
+// so "SET application_name TO 'my app name'" remains a single 4-token clause
+// instead of being split inside the quoted value (would have caused spurious
+// function-fingerprint drift on any pg_get_functiondef output with quoted SET
+// values containing spaces).
+//
+// SET clause value is greedy: it absorbs the rest of the input up to the next
+// known top-level keyword (parallel/security/cost/rows/not/stable/immutable/
+// volatile/leakproof/strict/window/external/transform/support). This makes
+// `set search_path to '$user', public, app_data` survive as one clause even
+// though it spans multiple tokens after the comma.
 func splitFunctionOptions(s string) []string {
-	fields := strings.Fields(s)
+	tokens := quoteAwareFields(s)
 	var out []string
 	i := 0
-	for i < len(fields) {
-		w := fields[i]
-		switch w {
+	for i < len(tokens) {
+		w := tokens[i]
+		switch strings.ToLower(w) {
 		case "parallel", "security":
-			if i+1 < len(fields) {
-				out = append(out, w+" "+fields[i+1])
+			if i+1 < len(tokens) {
+				out = append(out, w+" "+tokens[i+1])
 				i += 2
 				continue
 			}
 		case "cost", "rows":
-			if i+1 < len(fields) {
-				out = append(out, w+" "+fields[i+1])
+			if i+1 < len(tokens) {
+				out = append(out, w+" "+tokens[i+1])
 				i += 2
 				continue
 			}
 		case "not":
-			if i+1 < len(fields) {
-				out = append(out, w+" "+fields[i+1])
+			if i+1 < len(tokens) {
+				out = append(out, w+" "+tokens[i+1])
 				i += 2
 				continue
 			}
 		case "set":
-			// "set <k> to <v>" — fixed 4-token clause
-			if i+3 < len(fields) && strings.EqualFold(fields[i+2], "to") {
-				out = append(out, strings.Join(fields[i:i+4], " "))
-				i += 4
+			// "set <k> to <v>" — value is greedy up to next top-level keyword.
+			if i+3 < len(tokens) && strings.EqualFold(tokens[i+2], "to") {
+				end := i + 4
+				for end < len(tokens) && !isFunctionTopLevelKeyword(tokens[end]) {
+					end++
+				}
+				out = append(out, strings.Join(tokens[i:end], " "))
+				i = end
 				continue
 			}
 		}
 		out = append(out, w)
 		i++
 	}
+	return out
+}
+
+// isFunctionTopLevelKeyword reports whether a token starts a new top-level
+// function-options clause (i.e., ends the greedy value capture of a SET clause).
+func isFunctionTopLevelKeyword(tok string) bool {
+	switch strings.ToLower(tok) {
+	case "parallel", "security", "cost", "rows", "not",
+		"stable", "immutable", "volatile", "leakproof", "strict",
+		"window", "external", "transform", "support", "set":
+		return true
+	}
+	return false
+}
+
+// quoteAwareFields splits s on whitespace, treating single-quoted runs as one
+// token. PG's pg_get_functiondef quotes string values with single quotes and
+// escapes embedded quotes with `''`. Whitespace inside the quoted range is
+// preserved as part of the token.
+func quoteAwareFields(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inQuote := false
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'':
+			cur.WriteByte(c)
+			if inQuote {
+				// '' = escaped quote inside the literal — keep inQuote.
+				if i+1 < len(s) && s[i+1] == '\'' {
+					cur.WriteByte('\'')
+					i++
+					continue
+				}
+				inQuote = false
+			} else {
+				inQuote = true
+			}
+		case !inQuote && (c == ' ' || c == '\t' || c == '\n' || c == '\r'):
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
 	return out
 }
 
