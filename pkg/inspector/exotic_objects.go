@@ -47,7 +47,8 @@ func loadCompositeTypes(ctx context.Context, pool *pgxpool.Pool, st *schema.Sche
 		SELECT n.nspname, t.typname,
 		       (SELECT array_agg(format('%I %s', a.attname, format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum)
 		        FROM pg_attribute a
-		        WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped) AS attrs
+		        WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped) AS attrs,
+		       pg_get_userbyid(t.typowner) AS owner
 		FROM pg_type t
 		JOIN pg_namespace n ON n.oid = t.typnamespace
 		WHERE t.typtype = 'c' AND t.typrelid IS NOT NULL AND t.typrelid <> 0
@@ -62,12 +63,12 @@ func loadCompositeTypes(ctx context.Context, pool *pgxpool.Pool, st *schema.Sche
 		st.CompositeTypes = make(map[string]*schema.CompositeType)
 	}
 	for rows.Next() {
-		var nsp, name string
+		var nsp, name, owner string
 		var attrs []string
-		if err := rows.Scan(&nsp, &name, &attrs); err != nil {
+		if err := rows.Scan(&nsp, &name, &attrs, &owner); err != nil {
 			return err
 		}
-		ct := &schema.CompositeType{Schema: strings.ToLower(nsp), Name: strings.ToLower(name)}
+		ct := &schema.CompositeType{Schema: strings.ToLower(nsp), Name: strings.ToLower(name), Owner: owner}
 		for _, a := range attrs {
 			// "name type" — split at first space.
 			i := strings.IndexByte(a, ' ')
@@ -87,7 +88,8 @@ func loadCompositeTypes(ctx context.Context, pool *pgxpool.Pool, st *schema.Sche
 func loadRangeTypes(ctx context.Context, pool *pgxpool.Pool, st *schema.SchemaState, schemas []string) error {
 	rows, err := pool.Query(ctx, `
 		SELECT n.nspname, t.typname,
-		       format_type(r.rngsubtype, NULL) AS subtype
+		       format_type(r.rngsubtype, NULL) AS subtype,
+		       pg_get_userbyid(t.typowner)     AS owner
 		FROM pg_range r
 		JOIN pg_type t ON t.oid = r.rngtypid
 		JOIN pg_namespace n ON n.oid = t.typnamespace
@@ -101,14 +103,15 @@ func loadRangeTypes(ctx context.Context, pool *pgxpool.Pool, st *schema.SchemaSt
 		st.RangeTypes = make(map[string]*schema.RangeType)
 	}
 	for rows.Next() {
-		var nsp, name, subtype string
-		if err := rows.Scan(&nsp, &name, &subtype); err != nil {
+		var nsp, name, subtype, owner string
+		if err := rows.Scan(&nsp, &name, &subtype, &owner); err != nil {
 			return err
 		}
 		rt := &schema.RangeType{
 			Schema:  strings.ToLower(nsp),
 			Name:    strings.ToLower(name),
 			Subtype: subtype,
+			Owner:   owner,
 		}
 		st.RangeTypes[rt.Schema+"."+rt.Name] = rt
 	}
@@ -119,7 +122,8 @@ func loadForeignServers(ctx context.Context, pool *pgxpool.Pool, st *schema.Sche
 	rows, err := pool.Query(ctx, `
 		SELECT s.srvname, COALESCE(s.srvtype, ''), COALESCE(s.srvversion, ''),
 		       w.fdwname,
-		       COALESCE(s.srvoptions::text[], ARRAY[]::text[]) AS opts
+		       COALESCE(s.srvoptions::text[], ARRAY[]::text[]) AS opts,
+		       pg_get_userbyid(s.srvowner) AS owner
 		FROM pg_foreign_server s
 		JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw
 	`)
@@ -131,14 +135,14 @@ func loadForeignServers(ctx context.Context, pool *pgxpool.Pool, st *schema.Sche
 		st.ForeignServers = make(map[string]*schema.ForeignServer)
 	}
 	for rows.Next() {
-		var name, srvType, srvVer, fdw string
+		var name, srvType, srvVer, fdw, owner string
 		var opts []string
-		if err := rows.Scan(&name, &srvType, &srvVer, &fdw, &opts); err != nil {
+		if err := rows.Scan(&name, &srvType, &srvVer, &fdw, &opts, &owner); err != nil {
 			return err
 		}
 		st.ForeignServers[strings.ToLower(name)] = &schema.ForeignServer{
 			Name: strings.ToLower(name), Type: srvType, Version: srvVer,
-			Wrapper: strings.ToLower(fdw), Options: opts,
+			Wrapper: strings.ToLower(fdw), Options: opts, Owner: owner,
 		}
 	}
 	return rows.Err()
@@ -148,7 +152,8 @@ func loadForeignTables(ctx context.Context, pool *pgxpool.Pool, st *schema.Schem
 	rows, err := pool.Query(ctx, `
 		SELECT n.nspname, c.relname,
 		       (SELECT srvname FROM pg_foreign_server WHERE oid = ft.ftserver) AS server,
-		       COALESCE(ft.ftoptions::text[], ARRAY[]::text[]) AS opts
+		       COALESCE(ft.ftoptions::text[], ARRAY[]::text[]) AS opts,
+		       pg_get_userbyid(c.relowner) AS owner
 		FROM pg_foreign_table ft
 		JOIN pg_class    c ON c.oid = ft.ftrelid
 		JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -162,14 +167,14 @@ func loadForeignTables(ctx context.Context, pool *pgxpool.Pool, st *schema.Schem
 		st.ForeignTables = make(map[string]*schema.ForeignTable)
 	}
 	for rows.Next() {
-		var nsp, name, server string
+		var nsp, name, server, owner string
 		var opts []string
-		if err := rows.Scan(&nsp, &name, &server, &opts); err != nil {
+		if err := rows.Scan(&nsp, &name, &server, &opts, &owner); err != nil {
 			return err
 		}
 		st.ForeignTables[strings.ToLower(nsp)+"."+strings.ToLower(name)] = &schema.ForeignTable{
 			Schema: strings.ToLower(nsp), Name: strings.ToLower(name),
-			Server: strings.ToLower(server), Options: opts,
+			Server: strings.ToLower(server), Options: opts, Owner: owner,
 		}
 	}
 	return rows.Err()

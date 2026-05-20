@@ -63,3 +63,62 @@ func TestDiffOwners_functionOwnerChange(t *testing.T) {
 	}
 	assert.True(t, saw, "expected ALTER FUNCTION … OWNER TO")
 }
+
+func diffOwnersHas(chs []change, needle string) bool {
+	for _, c := range chs {
+		if strings.Contains(c.rawSQL, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDiffOwners_domain(t *testing.T) {
+	d := &schema.SchemaState{Domains: map[string]*schema.Domain{
+		"public.email": {Schema: "public", Name: "email", BaseType: "text", Owner: "new_owner"},
+	}}
+	l := &schema.SchemaState{Domains: map[string]*schema.Domain{
+		"public.email": {Schema: "public", Name: "email", BaseType: "text", Owner: "old_owner"},
+	}}
+	assert.True(t, diffOwnersHas(diffOwners(d, l), "ALTER DOMAIN public.email OWNER TO new_owner"))
+}
+
+func TestDiffOwners_compositeType(t *testing.T) {
+	d := &schema.SchemaState{CompositeTypes: map[string]*schema.CompositeType{
+		"public.addr": {Schema: "public", Name: "addr", Owner: "new_owner"},
+	}}
+	l := &schema.SchemaState{CompositeTypes: map[string]*schema.CompositeType{
+		"public.addr": {Schema: "public", Name: "addr", Owner: "old_owner"},
+	}}
+	assert.True(t, diffOwnersHas(diffOwners(d, l), "ALTER TYPE public.addr OWNER TO new_owner"))
+}
+
+func TestDiffOwners_rangeType(t *testing.T) {
+	d := &schema.SchemaState{RangeTypes: map[string]*schema.RangeType{
+		"public.intr": {Schema: "public", Name: "intr", Subtype: "int4", Owner: "new_owner"},
+	}}
+	l := &schema.SchemaState{RangeTypes: map[string]*schema.RangeType{
+		"public.intr": {Schema: "public", Name: "intr", Subtype: "int4", Owner: "old_owner"},
+	}}
+	assert.True(t, diffOwnersHas(diffOwners(d, l), "ALTER TYPE public.intr OWNER TO new_owner"))
+}
+
+func TestDiffOwners_foreignTable(t *testing.T) {
+	d := &schema.SchemaState{ForeignTables: map[string]*schema.ForeignTable{
+		"public.rdb_users": {Schema: "public", Name: "rdb_users", Owner: "new_owner"},
+	}}
+	l := &schema.SchemaState{ForeignTables: map[string]*schema.ForeignTable{
+		"public.rdb_users": {Schema: "public", Name: "rdb_users", Owner: "old_owner"},
+	}}
+	assert.True(t, diffOwnersHas(diffOwners(d, l), "ALTER FOREIGN TABLE public.rdb_users OWNER TO new_owner"))
+}
+
+func TestDiffOwners_foreignServer(t *testing.T) {
+	d := &schema.SchemaState{ForeignServers: map[string]*schema.ForeignServer{
+		"remote_db": {Name: "remote_db", Owner: "new_owner"},
+	}}
+	l := &schema.SchemaState{ForeignServers: map[string]*schema.ForeignServer{
+		"remote_db": {Name: "remote_db", Owner: "old_owner"},
+	}}
+	assert.True(t, diffOwnersHas(diffOwners(d, l), "ALTER SERVER remote_db OWNER TO new_owner"))
+}

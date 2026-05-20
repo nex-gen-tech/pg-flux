@@ -79,6 +79,69 @@ func diffOwners(d, l *schema.SchemaState) []change {
 			))
 		}
 	}
+	// Domains (CREATE DOMAIN), composite types, range types, foreign tables, foreign servers.
+	// Each kind uses ALTER <kind> ... OWNER TO ... and is only emitted when both sides have
+	// a non-empty Owner (avoids spurious diff in unit tests / partial source files).
+	for k, dd := range d.Domains {
+		if dd == nil {
+			continue
+		}
+		ld := l.Domains[k]
+		if dd.Owner != "" && ld != nil && ld.Owner != "" && !ownerEqual(dd.Owner, ld.Owner) {
+			out = append(out, ownerChange(
+				fmt.Sprintf("ALTER DOMAIN %s.%s OWNER TO %s", ident(dd.Schema), ident(dd.Name), ident(dd.Owner)),
+				"DOMAIN "+k,
+			))
+		}
+	}
+	for k, dc := range d.CompositeTypes {
+		if dc == nil {
+			continue
+		}
+		lc := l.CompositeTypes[k]
+		if dc.Owner != "" && lc != nil && lc.Owner != "" && !ownerEqual(dc.Owner, lc.Owner) {
+			out = append(out, ownerChange(
+				fmt.Sprintf("ALTER TYPE %s.%s OWNER TO %s", ident(dc.Schema), ident(dc.Name), ident(dc.Owner)),
+				"TYPE "+k,
+			))
+		}
+	}
+	for k, dr := range d.RangeTypes {
+		if dr == nil {
+			continue
+		}
+		lr := l.RangeTypes[k]
+		if dr.Owner != "" && lr != nil && lr.Owner != "" && !ownerEqual(dr.Owner, lr.Owner) {
+			out = append(out, ownerChange(
+				fmt.Sprintf("ALTER TYPE %s.%s OWNER TO %s", ident(dr.Schema), ident(dr.Name), ident(dr.Owner)),
+				"TYPE "+k,
+			))
+		}
+	}
+	for k, dft := range d.ForeignTables {
+		if dft == nil {
+			continue
+		}
+		lft := l.ForeignTables[k]
+		if dft.Owner != "" && lft != nil && lft.Owner != "" && !ownerEqual(dft.Owner, lft.Owner) {
+			out = append(out, ownerChange(
+				fmt.Sprintf("ALTER FOREIGN TABLE %s.%s OWNER TO %s", ident(dft.Schema), ident(dft.Name), ident(dft.Owner)),
+				"FOREIGN TABLE "+k,
+			))
+		}
+	}
+	for k, dfs := range d.ForeignServers {
+		if dfs == nil {
+			continue
+		}
+		lfs := l.ForeignServers[k]
+		if dfs.Owner != "" && lfs != nil && lfs.Owner != "" && !ownerEqual(dfs.Owner, lfs.Owner) {
+			out = append(out, ownerChange(
+				fmt.Sprintf("ALTER SERVER %s OWNER TO %s", ident(dfs.Name), ident(dfs.Owner)),
+				"SERVER "+k,
+			))
+		}
+	}
 	return out
 }
 

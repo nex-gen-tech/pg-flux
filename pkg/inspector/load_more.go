@@ -280,7 +280,8 @@ func loadDomainMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 			t.typname,
 			pg_catalog.format_type(t.typbasetype, t.typtypmod) AS base_type,
 			COALESCE(c.conname, '') AS conname,
-			COALESCE(pg_get_constraintdef(c.oid, true), '') AS condef
+			COALESCE(pg_get_constraintdef(c.oid, true), '') AS condef,
+			pg_get_userbyid(t.typowner) AS owner
 		FROM pg_catalog.pg_type t
 		JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
 		LEFT JOIN pg_catalog.pg_constraint c
@@ -296,14 +297,14 @@ func loadDomainMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (m
 
 	out := make(map[string]*schema.Domain)
 	for rows.Next() {
-		var ns, name, baseType, conname, condef string
-		if err := rows.Scan(&ns, &name, &baseType, &conname, &condef); err != nil {
+		var ns, name, baseType, conname, condef, owner string
+		if err := rows.Scan(&ns, &name, &baseType, &conname, &condef, &owner); err != nil {
 			return nil, err
 		}
 		key := strings.ToLower(ns) + "." + strings.ToLower(name)
 		dom, ok := out[key]
 		if !ok {
-			dom = &schema.Domain{Schema: ns, Name: name, BaseType: baseType}
+			dom = &schema.Domain{Schema: ns, Name: name, BaseType: baseType, Owner: owner}
 			out[key] = dom
 		}
 		// pg_get_constraintdef returns "CHECK (...)" — strip the "CHECK (" and ")" wrapper.

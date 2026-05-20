@@ -407,4 +407,6 @@ type Domain struct {
 	Name        string
 	BaseType    string
 	Constraints []DomainConstraint
+	// Owner is the role name owning the domain (pg_get_userbyid(t.typowner)).
+	Owner string
 }
