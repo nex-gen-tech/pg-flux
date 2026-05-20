@@ -705,17 +705,22 @@ func stmtFor(c change, opt Options) []plan.Statement {
 		if c.v == nil {
 			return nil
 		}
-		var ddl string
+		var ddl, msg string
 		if c.v.Materialized {
 			ddl = fmt.Sprintf("DROP MATERIALIZED VIEW IF EXISTS %s.%s CASCADE", ident(c.v.Schema), ident(c.v.Name))
+			// Matview DROP+CREATE re-populates from the defining query (potentially
+			// long-running on large datasets); dependent indexes, grants, and comments
+			// are re-emitted by their own diff passes, but operators should know.
+			msg = "Drops materialized view; data is rebuilt on CREATE, may block for the duration of the populating query"
 		} else {
 			ddl = fmt.Sprintf("DROP VIEW IF EXISTS %s.%s CASCADE", ident(c.v.Schema), ident(c.v.Name))
+			msg = "Drops view"
 		}
 		return []plan.Statement{{
 			OpType:  string(c.kind),
 			DDL:     ddl,
 			Object:  c.viewKey,
-			Hazards: []hazard.Detected{{Type: hazard.DataLoss, Severity: hazard.SeverityBlocking, Message: "Drops view"}},
+			Hazards: []hazard.Detected{{Type: hazard.DataLoss, Severity: hazard.SeverityBlocking, Message: msg}},
 		}}
 	case plan.ChangeCreateSequence:
 		if c.seq == nil {

@@ -172,6 +172,17 @@ func processRawStmt(raw *pgq.RawStmt, content string, lines []string, st *schema
 		return captureMatView(n.CreateTableAsStmt, raw, st)
 	case *pgq.Node_AlterTableStmt:
 		return captureAlterTable(n.AlterTableStmt, raw, st)
+	case *pgq.Node_RefreshMatViewStmt:
+		// Pass through REFRESH MATERIALIZED VIEW [CONCURRENTLY] as ExtraDDL so the
+		// user can manually trigger refreshes from declarative schema files. Each
+		// REFRESH lives in ExtraDDL and is emitted in the next migration; subsequent
+		// applies skip it (idempotent: REFRESH is always safe to re-run).
+		sql, err := deparseOne(raw)
+		if err != nil {
+			return err
+		}
+		st.ExtraDDL = append(st.ExtraDDL, strings.TrimSpace(sql))
+		return nil
 	default:
 		return nil
 	}
