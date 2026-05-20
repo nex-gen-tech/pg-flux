@@ -113,6 +113,24 @@ func TestAutoNotValid_disabled_emitsPlainAdd(t *testing.T) {
 	assert.NotContains(t, stmts[0].DDL, "NOT VALID")
 }
 
+// Fix #5: ADD CONSTRAINT for FOREIGN KEY with --auto-not-valid (default) should
+// rewrite to NOT VALID + follow-up VALIDATE CONSTRAINT, same as CHECK.
+func TestAutoNotValid_foreignKey(t *testing.T) {
+	c := change{
+		kind: plan.ChangeAddConstraint,
+		sch:  "public", tbl: "orders",
+		conName: "orders_user_fk", conKind: "f",
+		conDef: "FOREIGN KEY (user_id) REFERENCES public.users(id)",
+	}
+	stmts := stmtFor(c, Options{AutoConstraintNotValid: true})
+	require.Len(t, stmts, 2)
+	assert.Contains(t, stmts[0].DDL, "ADD CONSTRAINT orders_user_fk FOREIGN KEY")
+	assert.Contains(t, stmts[0].DDL, "NOT VALID")
+	assert.Equal(t, "VALIDATE_TABLE_CONSTRAINT", stmts[1].OpType)
+	assert.Contains(t, stmts[1].DDL, "VALIDATE CONSTRAINT orders_user_fk")
+	assert.True(t, stmts[1].IsConcurrent, "VALIDATE CONSTRAINT must run outside main txn")
+}
+
 // Fix #5: UNIQUE / PRIMARY KEY constraints are not eligible for NOT VALID rewrite —
 // the catalog does not support NOT VALID on unique/PK in PostgreSQL.
 func TestAutoNotValid_doesNotApplyToUnique(t *testing.T) {
