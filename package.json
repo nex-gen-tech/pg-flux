@@ -1,0 +1,16 @@
+{
+  "name": "pg-flux-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "build:cli": "cd apps/cli && go build -o pg-flux ./cmd/pg-flux",
+    "test:cli": "cd apps/cli && go test ./... -count=1",
+    "build:web": "cd apps/web && bun run build",
+    "dev:web": "cd apps/web && bun run dev",
+    "build": "bun run build:cli && bun run build:web"
+  },
+  "packageManager": "bun@1.3.0"
+}

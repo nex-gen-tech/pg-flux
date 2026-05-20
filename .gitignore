@@ -1,27 +1,22 @@
-# Binaries
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-/pg-flux
-bin/
-dist/
+# Build outputs
+apps/cli/pg-flux
+apps/web/dist/
+apps/web/.bun-cache/
 
-# Test
-*.test
-profile.out
-*.cpu
-
-# Coverage / profiling output
-*.out
-*.coverprofile
-coverage.html
+# Dependencies
+node_modules/
 
 # Editor / OS
+.DS_Store
+*.swp
 .idea/
 .vscode/
-*.swp
-.DS_Store
+
+# Test artifacts
+/tmp/
+*.out
+coverage.out
+
+# Local config / secrets
 .env
-.env.*
+.env.local

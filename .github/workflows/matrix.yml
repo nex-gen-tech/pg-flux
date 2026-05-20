@@ -85,8 +85,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: apps/cli/go.mod
           cache: true
+          cache-dependency-path: apps/cli/go.sum
 
       - name: install psql client
         run: |
@@ -94,11 +95,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-client
 
       - name: build pg-flux
+        working-directory: apps/cli
         run: go build -o pg-flux ./cmd/pg-flux
 
       - name: run matrix
+        working-directory: apps/cli
         env:
-          BIN: ${{ github.workspace }}/pg-flux
+          BIN: ${{ github.workspace }}/apps/cli/pg-flux
           PGHOST: localhost
           PGUSER: pgflux
           PGPASS: pgflux
