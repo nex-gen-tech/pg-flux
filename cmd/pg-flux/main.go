@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/nexg/pg-flux/pkg/codegen"
 	"github.com/nexg/pg-flux/pkg/db"
 	"github.com/nexg/pg-flux/pkg/differ"
 	"github.com/nexg/pg-flux/pkg/dump"
@@ -147,7 +149,7 @@ func newRoot() *cobra.Command {
 		}
 		return nil
 	}
-	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdDump(), cmdVerify(), cmdPull(), cmdVersion())
+	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdDump(), cmdVerify(), cmdPull(), cmdGen(), cmdVersion())
 	return r
 }
 
@@ -395,6 +397,150 @@ func cmdPull() *cobra.Command {
 	c.Flags().BoolVar(&dry, "dry-run", true, "print the would-be quarantine SQL instead of writing it")
 	c.Flags().StringVar(&out, "output", "./schema/_pulled", "directory for the quarantine .sql files; created if missing")
 	return c
+}
+
+// cmdGen generates application-language type definitions from the schema.
+// Sources state from either the live DB (default) or the source files in
+// --schema (handy for offline CI). Emits one file per object kind per language.
+func cmdGen() *cobra.Command {
+	var (
+		langs      []string
+		outDir     string
+		pkgName    string
+		fromSource bool
+		check      bool
+		configFile string
+	)
+	c := &cobra.Command{
+		Use:   "gen",
+		Short: "Generate Go / TypeScript type definitions from the schema",
+		Long: "Reads the pg-flux schema model (live DB or source files) and emits\n" +
+			"application-language types so app code stays in sync after every migration.\n" +
+			"Use --check in CI to fail the build when on-disk generated files are stale.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+
+			// Load source-of-truth: either live DB or schema files.
+			var state *schema.SchemaState
+			if fromSource {
+				st, err := loadDesired()
+				if err != nil {
+					return err
+				}
+				state = st
+			} else {
+				pool, err := db.NewPool(ctx, dbURL)
+				if err != nil {
+					return err
+				}
+				defer pool.Close()
+				st, err := inspector.Inspect(ctx, pool, inspector.Options{Schemas: parseSchemas()})
+				if err != nil {
+					return err
+				}
+				state = st
+			}
+
+			// Load codegen config (.pg-flux-codegen.yml). When present and no
+			// --lang flag was given, drive everything from the file.
+			cfg, err := codegen.LoadConfig(configFile)
+			if err != nil {
+				return err
+			}
+
+			var outputs []codegen.OutputConfig
+			if cfg != nil && len(cfg.Outputs) > 0 && !cmd.Flags().Changed("lang") {
+				outputs = cfg.Outputs
+			} else {
+				if len(langs) == 0 {
+					langs = []string{"go"}
+				}
+				for _, l := range langs {
+					o := codegen.OutputConfig{
+						Lang:    codegen.Language(strings.ToLower(l)),
+						Out:     outDir,
+						Package: pkgName,
+					}
+					if o.Out == "" {
+						o.Out = filepath.Join("internal", "dbgen")
+					}
+					outputs = append(outputs, o)
+				}
+			}
+
+			anyDiff := false
+			for _, o := range outputs {
+				gen, err := makeGenerator(o)
+				if err != nil {
+					return err
+				}
+				fs, err := gen.Generate(state, codegen.Options{
+					OutDir:  o.Out,
+					Package: o.Package,
+					TypeMap: makeTypeMap(o),
+				})
+				if err != nil {
+					return fmt.Errorf("[%s] generate: %w", o.Lang, err)
+				}
+				if check {
+					diffs, err := fs.Check(o.Out)
+					if err != nil {
+						return err
+					}
+					codegen.WriteSummary(cmd.OutOrStdout(), o.Lang, 0, 0, diffs)
+					if len(diffs) > 0 {
+						anyDiff = true
+					}
+					continue
+				}
+				written, skipped, err := fs.Write(o.Out)
+				if err != nil {
+					return err
+				}
+				codegen.WriteSummary(cmd.OutOrStdout(), o.Lang, written, skipped, nil)
+			}
+			if check && anyDiff {
+				return fmt.Errorf("gen --check: on-disk generated files are stale; run `pg-flux gen` to refresh")
+			}
+			return nil
+		},
+	}
+	c.Flags().StringSliceVar(&langs, "lang", nil, "target language(s): go,ts (repeatable; default: go)")
+	c.Flags().StringVar(&outDir, "out", "", "output directory (single-language mode; default ./internal/dbgen)")
+	c.Flags().StringVar(&pkgName, "package", "", "Go package name (default: dbgen)")
+	c.Flags().BoolVar(&fromSource, "from-source", false, "generate from schema files instead of the live DB")
+	c.Flags().BoolVar(&check, "check", false, "exit 1 if on-disk generated files differ from what would be emitted")
+	c.Flags().StringVar(&configFile, "codegen-config", ".pg-flux-codegen.yml", "path to codegen config file")
+	return c
+}
+
+func makeGenerator(o codegen.OutputConfig) (codegen.Generator, error) {
+	switch o.Lang {
+	case codegen.LangGo:
+		g := codegen.NewGoGenerator()
+		if len(o.NameOverrides) > 0 {
+			g.NameOverrides = o.NameOverrides
+		}
+		return g, nil
+	case codegen.LangTypeScript, "typescript":
+		g := codegen.NewTSGenerator()
+		if len(o.NameOverrides) > 0 {
+			g.NameOverrides = o.NameOverrides
+		}
+		return g, nil
+	}
+	return nil, fmt.Errorf("unsupported language %q (supported: go, ts)", o.Lang)
+}
+
+func makeTypeMap(o codegen.OutputConfig) codegen.TypeMap {
+	switch o.Lang {
+	case codegen.LangGo:
+		return &codegen.GoTypeMap{Overrides: o.TypeOverrides}
+	case codegen.LangTypeScript, "typescript":
+		return &codegen.TSTypeMap{Overrides: o.TypeOverrides}
+	}
+	return nil
 }
 
 func cmdMigrateGenerate() *cobra.Command {
