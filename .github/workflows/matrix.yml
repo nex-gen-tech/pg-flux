@@ -1,0 +1,118 @@
+name: matrix
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 03:17 UTC nightly — odd minute to avoid CI scheduler congestion.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  matrix:
+    name: PG14-18 × 26 mutations
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      pg14:
+        image: postgres:14
+        env:
+          POSTGRES_USER: pgflux
+          POSTGRES_PASSWORD: pgflux
+          POSTGRES_DB: pgflux
+        ports:
+          - 5441:5432
+        options: >-
+          --health-cmd="pg_isready -U pgflux"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=12
+      pg15:
+        image: postgres:15
+        env:
+          POSTGRES_USER: pgflux
+          POSTGRES_PASSWORD: pgflux
+          POSTGRES_DB: pgflux
+        ports:
+          - 5442:5432
+        options: >-
+          --health-cmd="pg_isready -U pgflux"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=12
+      pg16:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pgflux
+          POSTGRES_PASSWORD: pgflux
+          POSTGRES_DB: pgflux
+        ports:
+          - 5443:5432
+        options: >-
+          --health-cmd="pg_isready -U pgflux"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=12
+      pg17:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pgflux
+          POSTGRES_PASSWORD: pgflux
+          POSTGRES_DB: pgflux
+        ports:
+          - 5440:5432
+        options: >-
+          --health-cmd="pg_isready -U pgflux"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=12
+      pg18:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pgflux
+          POSTGRES_PASSWORD: pgflux
+          POSTGRES_DB: pgflux
+        ports:
+          - 5444:5432
+        options: >-
+          --health-cmd="pg_isready -U pgflux"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: build pg-flux
+        run: go build -o pg-flux ./cmd/pg-flux
+
+      - name: run matrix
+        env:
+          BIN: ${{ github.workspace }}/pg-flux
+          PGHOST: localhost
+          PGUSER: pgflux
+          PGPASS: pgflux
+          PG14_PORT: 5441
+          PG15_PORT: 5442
+          PG16_PORT: 5443
+          PG17_PORT: 5440
+          PG18_PORT: 5444
+        run: bash test/matrix/run.sh
+
+      - name: upload matrix report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-report
+          path: /tmp/full_matrix_report.txt
+          retention-days: 14
