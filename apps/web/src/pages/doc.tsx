@@ -37,15 +37,13 @@ export function DocPage({ page, pages }: DocPageProps) {
         {/* Content */}
         <main className="min-w-0 flex-1 py-8 lg:max-w-3xl xl:max-w-none">
           <article className="mx-auto max-w-[720px] xl:mx-0">
-            <header className="mb-6">
-              <Badge variant="outline" className="mb-3 text-[--color-muted-foreground]">
-                {page.group}
-              </Badge>
-              <h1 className="text-3xl font-semibold tracking-tight text-[--color-foreground]">
+            <header className="mb-8">
+              <p className="editorial mb-2 text-lg text-[--color-primary]">{page.group}</p>
+              <h1 className="text-4xl font-semibold tracking-tight text-[--color-foreground]">
                 {page.title}
               </h1>
               {page.description && (
-                <p className="mt-2 text-base text-[--color-muted-foreground]">{page.description}</p>
+                <p className="mt-3 text-base leading-relaxed text-[--color-muted-foreground]">{page.description}</p>
               )}
             </header>
 

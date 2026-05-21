@@ -9,6 +9,7 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: "Instrument Serif", "Iowan Old Style", "Charter", Georgia, serif;
 
   --radius: 0.5rem;
 
@@ -160,11 +161,18 @@
   }
   .prose blockquote {
     border-left: 3px solid var(--color-primary);
-    padding: 0.25rem 1rem;
-    margin: 1rem 0;
-    color: var(--color-muted-foreground);
+    padding: 0.5rem 1.25rem;
+    margin: 1.25rem 0;
+    color: var(--color-foreground);
     background: var(--color-muted);
     border-radius: 0 var(--radius) var(--radius) 0;
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-size: 1.0625rem;
+    line-height: 1.55;
+  }
+  .prose blockquote p {
+    margin: 0;
   }
   .prose hr {
     border: 0;
@@ -188,6 +196,28 @@
    This ensures `class="dark"` is set on <html> before paint when needed. */
 html.no-transitions * {
   transition: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Editorial accent — Instrument Serif Italic.
+   Used sparingly: hero phrase, section eyebrows, callout titles, blockquote
+   pulls. Pairs against the geometric Inter sans like a Linear / Vercel
+   landing without becoming a costume.
+--------------------------------------------------------------------------- */
+.editorial {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+  /* Optical correction — serif italics sit a hair smaller than sans of the
+     same nominal size; nudge up slightly so the visual size matches. */
+  font-size: 1.06em;
+}
+.editorial-tight {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.02em;
 }
 
 /* ---------------------------------------------------------------------------
@@ -321,10 +351,12 @@ html.no-transitions * {
   margin-bottom: 0;
 }
 .callout-title {
-  font-weight: 600;
-  font-size: 0.875rem;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.05rem;
   margin-bottom: 0.25rem !important;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.01em;
 }
 .callout-note,
 .callout-info {

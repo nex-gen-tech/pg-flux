@@ -56,14 +56,17 @@ function Hero() {
             <span className="inline-flex h-1.5 w-1.5 rounded-full bg-[--color-primary]" />
             v0.1 · PostgreSQL 14 – 18
           </Badge>
-          <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight text-[--color-foreground] sm:text-5xl lg:text-6xl">
-            One source of truth for your Postgres schema
-            <span className="block text-[--color-primary]">and your app types.</span>
+          <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight text-[--color-foreground] sm:text-5xl lg:text-[64px]">
+            Your Postgres schema and your app types,
+            <span className="block text-[--color-primary]">
+              <span className="editorial-tight">finally</span> in the same place.
+            </span>
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-relaxed text-[--color-muted-foreground]">
-            Declarative migrations, safe apply, drift detection, schema dump, plus
-            end-to-end Go &amp; TypeScript codegen. Your schema and your app stay in
-            lock-step after every change.
+            Write your schema as plain SQL. pg-flux generates the migration,
+            applies it safely, and emits Go + TypeScript types that match —
+            every time. No DSL. No second source of truth. No more 3 a.m.
+            "wait, what type IS the email column."
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Button asChild size="lg">
@@ -105,37 +108,37 @@ const FEATURES = [
     icon: Database,
     title: "Declarative schema",
     body:
-      "Write SQL once in schema/. pg-flux diffs against the live DB and emits a minimal migration. No DSL, no second source of truth.",
+      "Write SQL once. pg-flux figures out the migration. No HCL, no DSL, no JSON config of your tables — just SQL, the way PostgreSQL meant it.",
   },
   {
     icon: ShieldCheck,
-    title: "Safe apply",
+    title: "Refuses to break prod",
     body:
-      "Mass-drop guard, drift detection between generate and apply, advisory locking, NOT VALID + VALIDATE auto-rewrites for FK & CHECK on large tables.",
+      "Mass-drops blocked. Type rewrites blocked. Drift between generate and apply caught by a baseline-hash check. You have to opt in to anything risky.",
   },
   {
     icon: GitMerge,
-    title: "Bidirectional sync",
+    title: "Adopts against existing DBs",
     body:
-      "dump · verify · pull. Adopt against an existing DB in one command. Catch out-of-band changes before they reach production source.",
+      "One command extracts your live schema into source files, round-trip clean. The dump → migrate generate loop produces zero pending statements. Verified in CI.",
   },
   {
     icon: Code2,
-    title: "Bidirectional codegen",
+    title: "Generates the types",
     body:
-      "Go structs + TS interfaces for every table, enum, composite, domain, view, function, and procedure. Branded IDs, zod schemas, ORM tags.",
+      "Go structs and TypeScript interfaces for every catalog object with a row shape. Branded IDs, zod validators, ORM tags — opt in to what you need, ignore the rest.",
   },
   {
     icon: Boxes,
-    title: "PG 14 – 18 coverage",
+    title: "PostgreSQL 14 through 18",
     body:
-      "NULLS NOT DISTINCT, virtual generated columns, named NOT NULL NOT VALID, NOT ENFORCED, security_invoker views. Version-gated, fail-loud.",
+      "Virtual generated columns, NULLS NOT DISTINCT, NOT ENFORCED, security_invoker views — all version-gated and emitted only when the target server supports them.",
   },
   {
     icon: Workflow,
-    title: "CI-friendly",
+    title: "Built for CI",
     body:
-      "verify --strict, gen --check, drift. Wire a pipeline that fails on stale generated code, undeclared objects, or production drift.",
+      "Three exit codes: drift detected, generated code stale, undeclared live objects. Wire a pipeline that fails on any of them and you'll catch issues before they reach production.",
   },
 ];
 
@@ -144,15 +147,15 @@ function Features() {
     <section className="border-b border-[--color-border]">
       <div className="mx-auto max-w-screen-2xl px-4 py-20 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="text-sm font-medium uppercase tracking-wider text-[--color-primary]">
-            What it does
+          <p className="editorial text-xl text-[--color-primary]">
+            What's in the box
           </p>
-          <h2 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-            Everything pg-flux ships, in one tool.
+          <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
+            Every piece that used to be a separate tool.
           </h2>
           <p className="mt-4 text-base text-[--color-muted-foreground]">
-            Migrations, drift detection, schema dump, and codegen — same model,
-            one source of truth, every workflow.
+            One CLI handles the lifecycle: schema in SQL, diffed against live,
+            applied safely, types generated, drift caught. Stop bolting tools together.
           </p>
         </div>
         <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -213,10 +216,10 @@ function Workflow_() {
     <section className="border-b border-[--color-border] bg-[--color-muted]/40">
       <div className="mx-auto max-w-screen-2xl px-4 py-20 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="text-sm font-medium uppercase tracking-wider text-[--color-primary]">
+          <p className="editorial text-xl text-[--color-primary]">
             How it works
           </p>
-          <h2 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+          <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
             The everyday workflow.
           </h2>
           <p className="mt-4 text-base text-[--color-muted-foreground]">
@@ -264,10 +267,10 @@ function Comparison() {
     <section className="border-b border-[--color-border]">
       <div className="mx-auto max-w-screen-2xl px-4 py-20 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="text-sm font-medium uppercase tracking-wider text-[--color-primary]">
+          <p className="editorial text-xl text-[--color-primary]">
             How it compares
           </p>
-          <h2 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+          <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
             One tool. No second source of truth.
           </h2>
           <p className="mt-4 text-base text-[--color-muted-foreground]">
