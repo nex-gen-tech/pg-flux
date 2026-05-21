@@ -49,17 +49,17 @@ class SearchModal {
     this.overlay.setAttribute("role", "dialog");
     this.overlay.setAttribute("aria-modal", "true");
     this.overlay.innerHTML = `
-      <div class="w-full max-w-xl overflow-hidden rounded-xl border border-[--color-border] bg-[--color-card] shadow-2xl">
-        <div class="flex items-center gap-2 border-b border-[--color-border] px-4">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-[--color-muted-foreground]"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
+      <div class="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+        <div class="flex items-center gap-2 border-b border-border px-4">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-muted-foreground"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
           <input
             type="search"
             data-search-input
             placeholder="Search docs..."
-            class="h-12 w-full border-0 bg-transparent text-sm text-[--color-foreground] outline-none placeholder:text-[--color-muted-foreground]"
+            class="h-12 w-full border-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
           />
-          <kbd class="hidden h-5 select-none items-center rounded border bg-[--color-muted] px-1.5 font-mono text-[10px] font-medium text-[--color-muted-foreground] sm:inline-flex">Esc</kbd>
+          <kbd class="hidden h-5 select-none items-center rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">Esc</kbd>
         </div>
         <div data-search-results class="max-h-[60vh] overflow-y-auto p-2"></div>
       </div>
@@ -79,7 +79,7 @@ class SearchModal {
     this.overlay.classList.remove("hidden");
     this.overlay.classList.add("flex");
     this.input.value = "";
-    this.results.innerHTML = `<div class="px-3 py-6 text-center text-sm text-[--color-muted-foreground]">Start typing to search…</div>`;
+    this.results.innerHTML = `<div class="px-3 py-6 text-center text-sm text-muted-foreground">Start typing to search…</div>`;
     setTimeout(() => this.input.focus(), 0);
   }
 
@@ -97,7 +97,7 @@ class SearchModal {
     if (!q) {
       this.hits = [];
       this.active = -1;
-      this.results.innerHTML = `<div class="px-3 py-6 text-center text-sm text-[--color-muted-foreground]">Start typing to search…</div>`;
+      this.results.innerHTML = `<div class="px-3 py-6 text-center text-sm text-muted-foreground">Start typing to search…</div>`;
       return;
     }
     const idx = await getIndex();
@@ -114,7 +114,7 @@ class SearchModal {
 
   private render() {
     if (this.hits.length === 0) {
-      this.results.innerHTML = `<div class="px-3 py-6 text-center text-sm text-[--color-muted-foreground]">No matches.</div>`;
+      this.results.innerHTML = `<div class="px-3 py-6 text-center text-sm text-muted-foreground">No matches.</div>`;
       return;
     }
     this.results.innerHTML = this.hits
@@ -123,14 +123,14 @@ class SearchModal {
         <a href="${h.href}" data-search-hit="${i}"
            class="flex items-start justify-between gap-3 rounded-md px-3 py-2.5 text-sm transition-colors ${
              i === this.active
-               ? "bg-[--color-secondary] text-[--color-foreground]"
-               : "text-[--color-foreground] hover:bg-[--color-muted]"
+               ? "bg-secondary text-foreground"
+               : "text-foreground hover:bg-muted"
            }">
           <div class="min-w-0">
             <div class="truncate font-medium">${escapeHtml(h.title)}</div>
-            <div class="truncate text-xs text-[--color-muted-foreground]">${escapeHtml(h.group)}</div>
+            <div class="truncate text-xs text-muted-foreground">${escapeHtml(h.group)}</div>
           </div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mt-1 shrink-0 text-[--color-muted-foreground]"><path d="M7 17 17 7M7 7h10v10" stroke-linecap="round"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mt-1 shrink-0 text-muted-foreground"><path d="M7 17 17 7M7 7h10v10" stroke-linecap="round"/></svg>
         </a>
       `,
       )

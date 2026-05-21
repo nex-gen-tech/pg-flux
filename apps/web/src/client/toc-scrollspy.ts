@@ -22,9 +22,9 @@ function init() {
   function setActive(id: string | null) {
     for (const l of links) {
       const active = l.getAttribute("data-toc-target") === id;
-      l.classList.toggle("text-[--color-primary]", active);
+      l.classList.toggle("text-primary", active);
       l.classList.toggle("font-medium", active);
-      l.classList.toggle("border-[--color-primary]", active);
+      l.classList.toggle("border-primary", active);
       l.style.borderLeftColor = active ? "var(--color-primary)" : "";
     }
   }

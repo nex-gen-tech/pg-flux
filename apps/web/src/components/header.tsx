@@ -11,14 +11,14 @@ interface HeaderProps {
 export function Header({ currentPath }: HeaderProps) {
   const onDocs = currentPath.startsWith("/docs");
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-[--color-border] bg-[--color-background]/85 backdrop-blur supports-[backdrop-filter]:bg-[--color-background]/70">
+    <header className="sticky top-0 z-40 w-full border-b border-border bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
       <div className="mx-auto flex h-14 max-w-screen-2xl items-center gap-4 px-4 sm:px-6 lg:px-8">
         {/* Mobile sidebar trigger — populated only on docs pages, hidden on lg+ */}
         {onDocs && (
           <button
             type="button"
             data-mobile-nav-trigger
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-[--color-foreground] hover:bg-[--color-muted] lg:hidden"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted lg:hidden"
             aria-label="Toggle navigation"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -29,7 +29,7 @@ export function Header({ currentPath }: HeaderProps) {
 
         {/* Brand */}
         <a href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-          <Logo className="text-[--color-primary]" />
+          <Logo className="text-primary" />
           <span className="text-[15px]">pg-flux</span>
         </a>
 
@@ -38,15 +38,15 @@ export function Header({ currentPath }: HeaderProps) {
           <a
             href="/docs/quick-start.html"
             className={cn(
-              "transition-colors hover:text-[--color-foreground]",
-              onDocs ? "text-[--color-foreground] font-medium" : "text-[--color-muted-foreground]",
+              "transition-colors hover:text-foreground",
+              onDocs ? "text-foreground font-medium" : "text-muted-foreground",
             )}
           >
             Docs
           </a>
           <a
             href="/docs/cli-overview.html"
-            className="text-[--color-muted-foreground] transition-colors hover:text-[--color-foreground]"
+            className="text-muted-foreground transition-colors hover:text-foreground"
           >
             CLI
           </a>
@@ -54,7 +54,7 @@ export function Header({ currentPath }: HeaderProps) {
             href="https://github.com/nexg/pg-flux"
             target="_blank"
             rel="noopener"
-            className="text-[--color-muted-foreground] transition-colors hover:text-[--color-foreground]"
+            className="text-muted-foreground transition-colors hover:text-foreground"
           >
             GitHub
           </a>
@@ -66,7 +66,7 @@ export function Header({ currentPath }: HeaderProps) {
           <button
             type="button"
             data-search-trigger
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-[--color-border] bg-[--color-background] px-3 text-sm text-[--color-muted-foreground] transition-colors hover:bg-[--color-muted] sm:min-w-[200px]"
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm text-muted-foreground transition-colors hover:bg-muted sm:min-w-[200px]"
             aria-label="Search documentation"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -83,7 +83,7 @@ export function Header({ currentPath }: HeaderProps) {
           <button
             type="button"
             data-theme-toggle
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-[--color-foreground] hover:bg-[--color-muted]"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted"
             aria-label="Toggle theme"
           >
             <svg className="hidden dark:block" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

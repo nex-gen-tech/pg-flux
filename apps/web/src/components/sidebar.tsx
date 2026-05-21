@@ -28,8 +28,8 @@ export function Sidebar({ pages, currentSlug, className }: SidebarProps) {
         const Icon = GROUP_ICONS[group] ?? BookOpen;
         return (
           <div key={group} className="mb-6">
-            <h4 className="mb-2 flex items-center gap-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-[--color-muted-foreground]">
-              <Icon size={12} className="text-[--color-primary]" />
+            <h4 className="mb-2 flex items-center gap-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <Icon size={12} className="text-primary" />
               <span>{group}</span>
             </h4>
             <ul className="space-y-px pl-2">
@@ -43,7 +43,7 @@ export function Sidebar({ pages, currentSlug, className }: SidebarProps) {
                         "block rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors",
                         active
                           ? "nav-item-active"
-                          : "text-[--color-muted-foreground] hover:bg-[--color-muted] hover:text-[--color-foreground]",
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
                       )}
                     >
                       {p.title}

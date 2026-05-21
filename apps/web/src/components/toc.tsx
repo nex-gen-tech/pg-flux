@@ -12,10 +12,10 @@ export function Toc({ items, className }: TocProps) {
   if (items.length === 0) return null;
   return (
     <nav className={cn("text-sm", className)} aria-label="On this page">
-      <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[--color-muted-foreground]">
+      <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         On this page
       </h4>
-      <ul className="space-y-1 border-l border-[--color-border]">
+      <ul className="space-y-1 border-l border-border">
         {items.map((item) => (
           <li key={item.id}>
             <a
@@ -23,7 +23,7 @@ export function Toc({ items, className }: TocProps) {
               data-toc-link
               data-toc-target={item.id}
               className={cn(
-                "block border-l-2 border-transparent py-0.5 pl-3 -ml-px text-[--color-muted-foreground] transition-colors hover:text-[--color-foreground]",
+                "block border-l-2 border-transparent py-0.5 pl-3 -ml-px text-muted-foreground transition-colors hover:text-foreground",
                 item.depth === 3 && "pl-5",
                 item.depth === 4 && "pl-7",
               )}

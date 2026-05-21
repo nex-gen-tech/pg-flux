@@ -19,7 +19,7 @@ import { TerminalHero } from "@/components/terminal-hero";
 
 export function Landing() {
   return (
-    <div className="flex min-h-screen flex-col bg-[--color-background] text-[--color-foreground]">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
       <Header currentPath="/" />
       <main className="flex-1">
         <Hero />
@@ -37,7 +37,7 @@ export function Landing() {
 
 function Hero() {
   return (
-    <section className="relative border-b border-[--color-border]">
+    <section className="relative border-b border-border">
       {/* Subtle dotted background pattern — no gradient, just a few dots */}
       <div
         aria-hidden
@@ -52,17 +52,17 @@ function Hero() {
       />
       <div className="relative mx-auto grid max-w-screen-2xl gap-14 px-4 py-20 sm:px-6 sm:py-24 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-8 lg:py-28">
         <div className="flex flex-col items-start">
-          <Badge variant="outline" className="mb-5 gap-1.5 border-[--color-border] py-1 pl-2 pr-3 text-[--color-muted-foreground]">
-            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-[--color-primary]" />
+          <Badge variant="outline" className="mb-5 gap-1.5 border-border py-1 pl-2 pr-3 text-muted-foreground">
+            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
             v0.1 · PostgreSQL 14 – 18
           </Badge>
-          <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight text-[--color-foreground] sm:text-5xl lg:text-[64px]">
+          <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight text-foreground sm:text-5xl lg:text-[64px]">
             Your Postgres schema and your app types,
-            <span className="block text-[--color-primary]">
+            <span className="block text-primary">
               <span className="editorial-tight">finally</span> in the same place.
             </span>
           </h1>
-          <p className="mt-6 max-w-xl text-lg leading-relaxed text-[--color-muted-foreground]">
+          <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
             Write your schema as plain SQL. pg-flux generates the migration,
             applies it safely, and emits Go + TypeScript types that match —
             every time. No DSL. No second source of truth. No more 3 a.m.
@@ -81,15 +81,15 @@ function Hero() {
               </a>
             </Button>
           </div>
-          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-[--color-muted-foreground]">
+          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
-              <Check size={14} className="text-[--color-primary]" /> Go 1.25+
+              <Check size={14} className="text-primary" /> Go 1.25+
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <Check size={14} className="text-[--color-primary]" /> MIT licensed
+              <Check size={14} className="text-primary" /> MIT licensed
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <Check size={14} className="text-[--color-primary]" /> Zero-config defaults
+              <Check size={14} className="text-primary" /> Zero-config defaults
             </span>
           </div>
         </div>
@@ -144,25 +144,25 @@ const FEATURES = [
 
 function Features() {
   return (
-    <section className="border-b border-[--color-border]">
+    <section className="border-b border-border">
       <div className="mx-auto max-w-screen-2xl px-4 py-20 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="editorial text-xl text-[--color-primary]">
+          <p className="editorial text-xl text-primary">
             What's in the box
           </p>
           <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
             Every piece that used to be a separate tool.
           </h2>
-          <p className="mt-4 text-base text-[--color-muted-foreground]">
+          <p className="mt-4 text-base text-muted-foreground">
             One CLI handles the lifecycle: schema in SQL, diffed against live,
             applied safely, types generated, drift caught. Stop bolting tools together.
           </p>
         </div>
         <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map(({ icon: Icon, title, body }) => (
-            <Card key={title} className="border-[--color-border] bg-[--color-card]">
+            <Card key={title} className="border-border bg-card">
               <CardContent className="p-6">
-                <div className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-md bg-[--color-secondary] text-[--color-primary]">
+                <div className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-md bg-secondary text-primary">
                   <Icon size={18} />
                 </div>
                 <CardTitle className="mb-2 text-base">{title}</CardTitle>
@@ -213,16 +213,16 @@ apply 20260520_add_role.sql ... ok`,
 
 function Workflow_() {
   return (
-    <section className="border-b border-[--color-border] bg-[--color-muted]/40">
+    <section className="border-b border-border bg-muted/40">
       <div className="mx-auto max-w-screen-2xl px-4 py-20 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="editorial text-xl text-[--color-primary]">
+          <p className="editorial text-xl text-primary">
             How it works
           </p>
           <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
             The everyday workflow.
           </h2>
-          <p className="mt-4 text-base text-[--color-muted-foreground]">
+          <p className="mt-4 text-base text-muted-foreground">
             Four commands. Edit, generate, apply, regenerate. Each step is
             observable and idempotent.
           </p>
@@ -231,16 +231,16 @@ function Workflow_() {
           {STEPS.map((step, i) => (
             <li
               key={step.title}
-              className="flex gap-5 rounded-xl border border-[--color-border] bg-[--color-card] p-6"
+              className="flex gap-5 rounded-xl border border-border bg-card p-6"
             >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[--color-border] bg-[--color-background] font-mono text-sm font-medium text-[--color-primary]">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-background font-mono text-sm font-medium text-primary">
                 {i + 1}
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="mb-3 text-base font-medium tracking-tight">
                   {step.title}
                 </h3>
-                <pre className="overflow-x-auto rounded-md border border-[--color-code-border] bg-[--color-code-bg] px-3.5 py-3 font-mono text-[13px] leading-6 text-[--color-foreground]">
+                <pre className="overflow-x-auto rounded-md border border-code-border bg-code-bg px-3.5 py-3 font-mono text-[13px] leading-6 text-foreground">
                   <code>{step.code}</code>
                 </pre>
               </div>
@@ -264,26 +264,26 @@ function Comparison() {
     { label: "CI gates", pgflux: "drift, verify, gen --check", others: "Custom scripts" },
   ];
   return (
-    <section className="border-b border-[--color-border]">
+    <section className="border-b border-border">
       <div className="mx-auto max-w-screen-2xl px-4 py-20 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="editorial text-xl text-[--color-primary]">
+          <p className="editorial text-xl text-primary">
             How it compares
           </p>
           <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
             One tool. No second source of truth.
           </h2>
-          <p className="mt-4 text-base text-[--color-muted-foreground]">
+          <p className="mt-4 text-base text-muted-foreground">
             Most teams bolt together a migration tool, a dump utility, and a
             codegen. pg-flux replaces all three with one model.
           </p>
         </div>
-        <div className="mt-10 overflow-hidden rounded-xl border border-[--color-border]">
+        <div className="mt-10 overflow-hidden rounded-xl border border-border">
           <table className="w-full text-sm">
-            <thead className="bg-[--color-muted] text-left text-[--color-muted-foreground]">
+            <thead className="bg-muted text-left text-muted-foreground">
               <tr>
                 <th className="px-5 py-3 font-medium">Capability</th>
-                <th className="px-5 py-3 font-medium text-[--color-primary]">pg-flux</th>
+                <th className="px-5 py-3 font-medium text-primary">pg-flux</th>
                 <th className="px-5 py-3 font-medium">Typical alternative</th>
               </tr>
             </thead>
@@ -291,11 +291,11 @@ function Comparison() {
               {rows.map((r, i) => (
                 <tr
                   key={r.label}
-                  className={i === rows.length - 1 ? "" : "border-b border-[--color-border]"}
+                  className={i === rows.length - 1 ? "" : "border-b border-border"}
                 >
                   <td className="px-5 py-3 font-medium">{r.label}</td>
-                  <td className="px-5 py-3 text-[--color-primary]">{r.pgflux}</td>
-                  <td className="px-5 py-3 text-[--color-muted-foreground]">{r.others}</td>
+                  <td className="px-5 py-3 text-primary">{r.pgflux}</td>
+                  <td className="px-5 py-3 text-muted-foreground">{r.others}</td>
                 </tr>
               ))}
             </tbody>
@@ -310,23 +310,23 @@ function Comparison() {
 
 function CTA() {
   return (
-    <section className="border-b border-[--color-border]">
+    <section className="border-b border-border">
       <div className="mx-auto max-w-screen-2xl px-4 py-20 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl rounded-2xl border border-[--color-border] bg-[--color-card] p-8 text-center sm:p-12">
-          <Terminal className="mx-auto mb-5 text-[--color-primary]" size={28} />
+        <div className="mx-auto max-w-3xl rounded-2xl border border-border bg-card p-8 text-center sm:p-12">
+          <Terminal className="mx-auto mb-5 text-primary" size={28} />
           <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
             Install and try it in two commands.
           </h2>
-          <p className="mt-3 text-[--color-muted-foreground]">
+          <p className="mt-3 text-muted-foreground">
             Go install, then point at any local Postgres.
           </p>
-          <div className="mt-6 inline-flex flex-col gap-2 rounded-lg border border-[--color-code-border] bg-[--color-code-bg] px-5 py-3 text-left font-mono text-sm">
-            <code className="text-[--color-foreground]">
-              <span className="text-[--color-primary]">$</span> go install
+          <div className="mt-6 inline-flex flex-col gap-2 rounded-lg border border-code-border bg-code-bg px-5 py-3 text-left font-mono text-sm">
+            <code className="text-foreground">
+              <span className="text-primary">$</span> go install
               github.com/nexg/pg-flux/cmd/pg-flux@latest
             </code>
-            <code className="text-[--color-foreground]">
-              <span className="text-[--color-primary]">$</span> pg-flux init
+            <code className="text-foreground">
+              <span className="text-primary">$</span> pg-flux init
             </code>
           </div>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
