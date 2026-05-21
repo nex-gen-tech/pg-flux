@@ -321,6 +321,26 @@ html.no-transitions * {
   padding: 0 !important;
 }
 
+/* Shiki dual-theme — map the per-span `--shiki-light` / `--shiki-dark`
+   custom properties to the active palette. Without these rules every token
+   collapses to the body foreground and the syntax highlighting looks dead. */
+.shiki,
+.shiki span {
+  color: var(--shiki-light);
+  background-color: var(--shiki-light-bg);
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark);
+  background-color: var(--shiki-dark-bg);
+}
+/* Inside our code-block wrapper the parent already supplies the panel
+   background, so the per-pre `--shiki-*-bg` is unwanted. */
+.code-block .shiki,
+.code-block .shiki span {
+  background-color: transparent !important;
+}
+
 /* ---------------------------------------------------------------------------
    Callouts (Info / Note / Tip / Warning / Important / Caution)
 --------------------------------------------------------------------------- */
@@ -382,15 +402,26 @@ html.no-transitions * {
 .dark .callout-tip .callout-title {
   color: hsl(160 55% 55%);
 }
-.callout-warning,
-.callout-important {
+.callout-warning {
   border-left-color: var(--color-accent);
 }
 .callout-warning .callout-icon,
-.callout-warning .callout-title,
+.callout-warning .callout-title {
+  color: var(--color-accent);
+}
+.callout-important {
+  border-left-color: hsl(265 55% 55%);
+}
 .callout-important .callout-icon,
 .callout-important .callout-title {
-  color: var(--color-accent);
+  color: hsl(265 55% 55%);
+}
+.dark .callout-important {
+  border-left-color: hsl(265 65% 70%);
+}
+.dark .callout-important .callout-icon,
+.dark .callout-important .callout-title {
+  color: hsl(265 65% 70%);
 }
 .callout-caution {
   border-left-color: var(--color-destructive);
