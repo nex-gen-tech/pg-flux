@@ -105,6 +105,14 @@ curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.s
 
 That detects your OS + arch (macOS and Linux, amd64 + arm64), downloads the right binary from the latest [GitHub Release](https://github.com/nex-gen-tech/pg-flux/releases), verifies the SHA-256 checksum, and drops `pg-flux` into `/usr/local/bin` (or `~/.local/bin` if that isn't writable).
 
+> **No-sudo install.** `/usr/local/bin` typically requires `sudo` to write to. To install entirely under your home directory, set `PGFLUX_BIN_DIR` before piping:
+>
+> ```bash
+> curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | PGFLUX_BIN_DIR=$HOME/.local/bin sh
+> ```
+>
+> Make sure `$HOME/.local/bin` is on your `PATH` — the installer warns you if it isn't.
+
 Other paths:
 
 | Path | Command |
