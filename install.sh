@@ -140,14 +140,32 @@ $SUDO mv "$TMP/$BIN_NAME" "$BIN_DIR/$BIN_NAME"
 
 # ---------- verify -----------------------------------------------------------
 
-if ! command -v "$BIN_NAME" >/dev/null 2>&1; then
-  red "Installed to $BIN_DIR/$BIN_NAME but it isn't on your PATH."
-  muted "Add this to your shell rc:"
-  muted "  export PATH=\"$BIN_DIR:\$PATH\""
-  exit 0
+# Verify the binary we JUST installed (by absolute path) — not whatever
+# `pg-flux` happens to be first on $PATH, which can be stale or unrelated.
+INSTALLED="$("$BIN_DIR/$BIN_NAME" version 2>/dev/null || true)"
+if [ -z "$INSTALLED" ]; then
+  err "installed binary at $BIN_DIR/$BIN_NAME failed to run"
 fi
 
-INSTALLED="$($BIN_NAME version 2>/dev/null || true)"
 green ">> done"
 muted "   $INSTALLED"
-muted "   try: pg-flux --help"
+
+# Informational: warn if the install dir isn't on PATH, but don't treat it
+# as an error — the binary works, the user just needs PATH set up.
+ON_PATH_FIRST=""
+if command -v "$BIN_NAME" >/dev/null 2>&1; then
+  ON_PATH_FIRST="$(command -v "$BIN_NAME")"
+fi
+
+if [ "$ON_PATH_FIRST" != "$BIN_DIR/$BIN_NAME" ]; then
+  echo ""
+  if [ -z "$ON_PATH_FIRST" ]; then
+    red "Note: $BIN_DIR is not on your PATH."
+  else
+    red "Note: another '$BIN_NAME' is ahead of $BIN_DIR/$BIN_NAME on your PATH ($ON_PATH_FIRST)."
+  fi
+  muted "Add this to your shell rc:"
+  muted "  export PATH=\"$BIN_DIR:\$PATH\""
+else
+  muted "   try: pg-flux --help"
+fi
