@@ -116,6 +116,40 @@ func SnakeCase(s string) string {
 	return b.String()
 }
 
+// singularExceptions is the set of lowercase words that end in 's' but are
+// already singular (i.e., not plurals). Singular() inspects the last
+// underscore-separated segment of the input against this set and skips
+// singularisation when a match is found.
+//
+// Common PostgreSQL identifiers that would otherwise be incorrectly mangled:
+// event_status → "EventStatu", user_address → "UserAddres", etc.
+var singularExceptions = map[string]struct{}{
+	"status":   {},
+	"address":  {},
+	"access":   {},
+	"canvas":   {},
+	"nexus":    {},
+	"focus":    {},
+	"census":   {},
+	"class":    {},
+	"mass":     {},
+	"pass":     {},
+	"process":  {},
+	"progress": {},
+	"success":  {},
+	"alias":    {},
+	"basis":    {},
+	"bonus":    {},
+	"corpus":   {},
+	"campus":   {},
+	"exodus":   {},
+	"genus":    {},
+	"minus":    {},
+	"plus":     {},
+	"radius":   {},
+	"virus":    {},
+}
+
 // Singular returns a best-effort singularisation of a (presumed plural) table
 // name. The rules are deliberately conservative: only the common English
 // pluralisations are handled. Users who need irregular cases can override via
@@ -126,8 +160,19 @@ func SnakeCase(s string) string {
 //	categories   → category
 //	matrices     → matrice          (we DO NOT handle irregular forms)
 //	settings     → setting           (drop trailing 's' is the safe default)
+//	event_status → event_status      (exception: "status" is not a plural)
 func Singular(s string) string {
 	if s == "" {
+		return s
+	}
+	// Check whether the last word segment (after the final '_') is a known
+	// non-plural word that ends in 's'. If so, return the input unchanged so
+	// that names like "event_status" are not mangled to "event_statu".
+	lastSeg := s
+	if i := strings.LastIndex(s, "_"); i >= 0 {
+		lastSeg = s[i+1:]
+	}
+	if _, ok := singularExceptions[strings.ToLower(lastSeg)]; ok {
 		return s
 	}
 	low := strings.ToLower(s)

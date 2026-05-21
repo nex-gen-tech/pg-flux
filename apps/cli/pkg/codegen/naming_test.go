@@ -63,6 +63,15 @@ func TestSingular(t *testing.T) {
 		{"class", "class"}, // -ss not stripped
 		{"news", "news"},   // ends in -ss only check; "news" ends in -s but conservatively strip → "new". Hmm.
 		{"", ""},
+		// Exception words: already-singular nouns ending in 's'.
+		{"status", "status"},
+		{"event_status", "event_status"},
+		{"attendee_status", "attendee_status"},
+		{"access", "access"},
+		{"process", "process"},
+		{"progress", "progress"},
+		{"success", "success"},
+		{"canvas", "canvas"},
 	}
 	for _, tc := range tests {
 		got := Singular(tc.in)
@@ -76,6 +85,29 @@ func TestSingular(t *testing.T) {
 		}
 		if got != tc.out {
 			t.Errorf("Singular(%q) = %q, want %q", tc.in, got, tc.out)
+		}
+	}
+}
+
+// TestPascalCaseInitStatus verifies the bug fix: type names ending in "status"
+// must not be mangled to "…Statu".
+func TestPascalCaseInitStatus(t *testing.T) {
+	tests := []struct{ in, out string }{
+		// Bug regression: these were producing "EventStatu"/"AttendeeStatu".
+		{"event_status", "EventStatus"},
+		{"attendee_status", "AttendeeStatus"},
+		// Other exception words.
+		{"user_access", "UserAccess"},
+		{"work_process", "WorkProcess"},
+		// Normal plurals should still singularize.
+		{"todo_priority", "TodoPriority"}, // no plural suffix, unchanged
+		// "users" still singularizes to "user" → "User".
+		{"users", "User"},
+	}
+	for _, tc := range tests {
+		got := PascalCaseInit(Singular(tc.in))
+		if got != tc.out {
+			t.Errorf("PascalCaseInit(Singular(%q)) = %q, want %q", tc.in, got, tc.out)
 		}
 	}
 }

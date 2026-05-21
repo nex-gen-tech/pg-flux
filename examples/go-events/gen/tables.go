@@ -10,10 +10,10 @@ import (
 
 // Attendee mirrors public.attendees.
 type Attendee struct {
-	EventID      int64         `db:"event_id" json:"event_id"`
-	UserID       int64         `db:"user_id" json:"user_id"`
-	RegisteredAt time.Time     `db:"registered_at" json:"registered_at"`
-	Status       AttendeeStatu `db:"status" json:"status"`
+	EventID      int64          `db:"event_id" json:"event_id"`
+	UserID       int64          `db:"user_id" json:"user_id"`
+	RegisteredAt time.Time      `db:"registered_at" json:"registered_at"`
+	Status       AttendeeStatus `db:"status" json:"status"`
 }
 
 // Event mirrors public.events.
@@ -27,7 +27,7 @@ type Event struct {
 	Capacity    *int32          `db:"capacity" json:"capacity"`
 	Description string          `db:"description" json:"description"`
 	Location    *string         `db:"location" json:"location"`
-	Status      EventStatu      `db:"status" json:"status"`
+	Status      EventStatus     `db:"status" json:"status"`
 	Metadata    json.RawMessage `db:"metadata" json:"metadata"`
 	Tags        []string        `db:"tags" json:"tags"`
 	DeletedAt   *time.Time      `db:"deleted_at" json:"deleted_at"`

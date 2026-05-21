@@ -3,23 +3,23 @@
 
 package dbgen
 
-// AttendeeStatu mirrors PG enum public.attendee_status.
-type AttendeeStatu string
+// AttendeeStatus mirrors PG enum public.attendee_status.
+type AttendeeStatus string
 
 const (
-	AttendeeStatuInvited    AttendeeStatu = "invited"
-	AttendeeStatuConfirmed  AttendeeStatu = "confirmed"
-	AttendeeStatuDeclined   AttendeeStatu = "declined"
-	AttendeeStatuWaitlisted AttendeeStatu = "waitlisted"
+	AttendeeStatusInvited    AttendeeStatus = "invited"
+	AttendeeStatusConfirmed  AttendeeStatus = "confirmed"
+	AttendeeStatusDeclined   AttendeeStatus = "declined"
+	AttendeeStatusWaitlisted AttendeeStatus = "waitlisted"
 )
 
-// EventStatu mirrors PG enum public.event_status.
-type EventStatu string
+// EventStatus mirrors PG enum public.event_status.
+type EventStatus string
 
 const (
-	EventStatuDraft     EventStatu = "draft"
-	EventStatuPublished EventStatu = "published"
-	EventStatuCancelled EventStatu = "cancelled"
+	EventStatusDraft     EventStatus = "draft"
+	EventStatusPublished EventStatus = "published"
+	EventStatusCancelled EventStatus = "cancelled"
 )
 
 // UserRole mirrors PG enum public.user_role.
