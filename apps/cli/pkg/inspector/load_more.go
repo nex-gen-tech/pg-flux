@@ -120,6 +120,7 @@ func mergeTableConstraints(ctx context.Context, pool *pgxpool.Pool, st *schema.S
 		JOIN pg_class r ON r.oid = c.conrelid
 		JOIN pg_namespace tn ON tn.oid = r.relnamespace
 		WHERE tn.nspname = ANY($1) AND c.contype IN ('c', 'f', 'u', 'x')
+			  AND c.conparentid = 0
 	`, schemas)
 	if err != nil {
 		return fmt.Errorf("pg_constraint: %w", err)

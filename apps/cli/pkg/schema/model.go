@@ -32,6 +32,10 @@ type SchemaState struct {
 	// CREATE TYPE ... AS ENUM AST nodes. Used by the differ for structured drift detection
 	// and by verify for undeclared-object checks.
 	Enums map[string]*EnumType
+	// PendingGrants holds GRANT/REVOKE entries whose target object was not yet loaded
+	// when the grant file was parsed (cross-file ordering: grants.sql sorts before
+	// products.sql, views.sql, etc.). Applied as a post-processing step in LoadDesiredState.
+	PendingGrants []*PendingGrant
 	// PendingRLS holds RLS enable/force flags for tables that may not yet exist when
 	// ALTER TABLE ... ENABLE ROW LEVEL SECURITY is parsed (cross-file ordering issue).
 	// Applied as a post-processing step in LoadDesiredState. Not used by the inspector.
@@ -102,6 +106,18 @@ type RLSFlags struct {
 	EnabledSet bool
 	Forced     bool
 	ForcedSet  bool
+}
+
+// PendingGrant is a GRANT/REVOKE that could not be applied on the first parse pass
+// because the target object had not been loaded yet (cross-file ordering).
+type PendingGrant struct {
+	ObjKind  string // "table", "view", "sequence", "function", "procedure"
+	Schema   string
+	Name     string // for functions: "schema.name(args)" identity string
+	Privs    []string
+	Grantees []string
+	WGO      bool
+	IsGrant  bool
 }
 
 // PendingAlterPol holds an ALTER POLICY that arrived before its CREATE POLICY was parsed.

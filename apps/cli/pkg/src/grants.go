@@ -161,12 +161,23 @@ func applyGrantToTarget(
 		}
 		if v := st.Views[key]; v != nil {
 			v.Privileges = mergePrivileges(v.Privileges, privs, grantees, wgo, isGrant)
+			return
 		}
+		// Target not found yet — defer to second pass.
+		st.PendingGrants = append(st.PendingGrants, &schema.PendingGrant{
+			ObjKind: "table_or_view", Schema: sch, Name: name,
+			Privs: privs, Grantees: grantees, WGO: wgo, IsGrant: isGrant,
+		})
 	case pgq.ObjectType_OBJECT_SEQUENCE:
 		sch, name := rangeVarParts(target)
 		if s := st.Sequences[schema.SeqKey(sch, name)]; s != nil {
 			s.Privileges = mergePrivileges(s.Privileges, privs, grantees, wgo, isGrant)
+			return
 		}
+		st.PendingGrants = append(st.PendingGrants, &schema.PendingGrant{
+			ObjKind: "sequence", Schema: sch, Name: name,
+			Privs: privs, Grantees: grantees, WGO: wgo, IsGrant: isGrant,
+		})
 	case pgq.ObjectType_OBJECT_FUNCTION, pgq.ObjectType_OBJECT_PROCEDURE, pgq.ObjectType_OBJECT_ROUTINE:
 		// ObjectWithArgs: schema.name(arg1, arg2)
 		owa := target.GetObjectWithArgs()
@@ -178,7 +189,12 @@ func applyGrantToTarget(
 		ident := sch + "." + name + "(" + args + ")"
 		if f := st.Functions[schema.FunctionKey(ident)]; f != nil {
 			f.Privileges = mergePrivileges(f.Privileges, privs, grantees, wgo, isGrant)
+			return
 		}
+		st.PendingGrants = append(st.PendingGrants, &schema.PendingGrant{
+			ObjKind: "function", Schema: sch, Name: ident,
+			Privs: privs, Grantees: grantees, WGO: wgo, IsGrant: isGrant,
+		})
 	}
 }
 

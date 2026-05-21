@@ -168,8 +168,8 @@ jobs:
           echo "--- apply migrations ---"
           "$BIN" migrate apply
 
-          echo "--- drift (informational — exits 1 due to known bugs B1/B2/B3) ---"
-          "$BIN" drift || true
+          echo "--- drift (must be clean) ---"
+          "$BIN" drift
 
           echo "--- verify (must be clean) ---"
           "$BIN" verify

@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- [3] CREATE_TYPE: public.order_status
-DO $pgflux$ BEGIN CREATE TYPE public.order_status AS ENUM ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $pgflux$;
+DO $pgflux$ BEGIN CREATE TYPE public.order_status AS ENUM ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $pgflux$;
 
 -- [4] CREATE_TYPE: public.product_status
 DO $pgflux$ BEGIN CREATE TYPE public.product_status AS ENUM ('draft', 'active', 'archived'); EXCEPTION WHEN duplicate_object THEN NULL; END $pgflux$;
@@ -54,8 +54,9 @@ CREATE TABLE IF NOT EXISTS public.categories (
 CREATE TABLE IF NOT EXISTS public.customers (
   id pg_catalog.int8 GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   email public.email_address NOT NULL,
-  display_name text NOT NULL,
+  full_name text NOT NULL,
   tier public.customer_tier DEFAULT 'standard' NOT NULL,
+  phone text,
   shipping_addr public.address,
   metadata jsonb DEFAULT '{}' NOT NULL,
   created_at timestamptz DEFAULT now() NOT NULL,
@@ -89,6 +90,7 @@ CREATE TABLE IF NOT EXISTS public.products (
   tags text[] DEFAULT '{}' NOT NULL,
   attributes jsonb DEFAULT '{}' NOT NULL,
   search_vector tsvector GENERATED ALWAYS AS (to_tsvector('english', (COALESCE(name, '') || ' ') || COALESCE(description, ''))) STORED,
+  cost public.positive_amount,
   created_at timestamptz DEFAULT now() NOT NULL,
   updated_at timestamptz DEFAULT now() NOT NULL,
   CONSTRAINT products_sku_unique UNIQUE (sku),
@@ -191,23 +193,29 @@ CREATE INDEX IF NOT EXISTS idx_orders_customer ON public.orders USING btree (cus
 -- [39] CREATE_INDEX: public.idx_orders_status
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders USING btree (status, created_at DESC);
 
--- [49] CREATE_MATERIALIZED_VIEW: public.product_catalog
+-- [50] CREATE_MATERIALIZED_VIEW: public.product_catalog
 CREATE MATERIALIZED VIEW public.product_catalog AS SELECT p.id, p.sku, p.name, p.price, p.status, c.name AS category_name FROM public.products p LEFT JOIN public.categories c ON c.id = p.category_id WHERE p.status = 'active';
 
--- [51] CREATE_VIEW: public.active_products
+-- [52] CREATE_VIEW: public.active_products
 CREATE OR REPLACE VIEW public.active_products WITH (security_invoker=true) AS SELECT p.id, p.sku, p.name, p.price, p.tags, p.search_vector FROM public.products p WHERE p.status = 'active';
 
--- [52] RAW_DDL: raw
+-- [53] RAW_DDL: raw
 CREATE TABLE IF NOT EXISTS public.orders_2024 PARTITION OF public.orders FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
 
--- [53] RAW_DDL: raw
+-- [54] RAW_DDL: raw
 CREATE TABLE IF NOT EXISTS public.orders_2025 PARTITION OF public.orders FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
 
--- [54] RAW_DDL: raw
+-- [55] RAW_DDL: raw
 CREATE TABLE IF NOT EXISTS public.orders_2026 PARTITION OF public.orders FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
 
--- [55] RAW_DDL: raw
-CREATE SCHEMA IF NOT EXISTS audit;
+-- [56] RAW_DDL: raw
+GRANT SELECT ON TABLE public.active_products TO PUBLIC;
+
+-- [57] RAW_DDL: raw
+GRANT SELECT ON TABLE public.product_catalog TO PUBLIC;
+
+-- [58] RAW_DDL: raw
+GRANT SELECT ON TABLE public.products TO PUBLIC;
 
 COMMIT;
 
@@ -249,7 +257,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_attributes ON public.produc
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_category ON public.products USING btree (category_id);
 
 -- [44] CREATE_INDEX: public.idx_products_price
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_price ON public.products USING btree (price) WHERE status = 'active';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_price ON public.products USING btree (price) WHERE status = 'active'::product_status;
 
 -- [45] CREATE_INDEX: public.idx_products_search
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_search ON public.products USING gin (search_vector);
@@ -257,12 +265,15 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_search ON public.products U
 -- [46] CREATE_INDEX: public.idx_products_sku_name
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_sku_name ON public.products USING btree (sku) INCLUDE (name, price);
 
--- [47] CREATE_INDEX: public.idx_products_status
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_status ON public.products USING btree (status) WHERE status = 'active';
+-- [47] CREATE_INDEX: public.idx_products_sku_nulls_nd
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_products_sku_nulls_nd ON public.products USING btree (sku) NULLS NOT DISTINCT;
 
--- [48] CREATE_INDEX: public.idx_products_tags
+-- [48] CREATE_INDEX: public.idx_products_status
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_status ON public.products USING btree (status) WHERE status = 'active'::product_status;
+
+-- [49] CREATE_INDEX: public.idx_products_tags
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_tags ON public.products USING gin (tags);
 
--- [50] CREATE_INDEX: public.idx_product_catalog_id
+-- [51] CREATE_INDEX: public.idx_product_catalog_id
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_product_catalog_id ON public.product_catalog USING btree (id);
 

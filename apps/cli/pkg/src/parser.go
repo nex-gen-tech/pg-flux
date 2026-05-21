@@ -67,6 +67,28 @@ func LoadDesiredState(opt LoadOptions) (*schema.SchemaState, error) {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 	}
+	// Second pass: apply deferred GRANT/REVOKE entries whose target was not loaded yet
+	// when the grant file was parsed (e.g. grants.sql sorts before products.sql/views.sql).
+	for _, pg := range st.PendingGrants {
+		switch pg.ObjKind {
+		case "table_or_view":
+			key := schema.TableKey(pg.Schema, pg.Name)
+			if t := st.Tables[key]; t != nil {
+				t.Privileges = mergePrivileges(t.Privileges, pg.Privs, pg.Grantees, pg.WGO, pg.IsGrant)
+			} else if v := st.Views[key]; v != nil {
+				v.Privileges = mergePrivileges(v.Privileges, pg.Privs, pg.Grantees, pg.WGO, pg.IsGrant)
+			}
+		case "sequence":
+			if s := st.Sequences[schema.SeqKey(pg.Schema, pg.Name)]; s != nil {
+				s.Privileges = mergePrivileges(s.Privileges, pg.Privs, pg.Grantees, pg.WGO, pg.IsGrant)
+			}
+		case "function":
+			if f := st.Functions[schema.FunctionKey(pg.Name)]; f != nil {
+				f.Privileges = mergePrivileges(f.Privileges, pg.Privs, pg.Grantees, pg.WGO, pg.IsGrant)
+			}
+		}
+	}
+	st.PendingGrants = nil
 	// Second pass: apply any pending RLS flags to tables that now exist
 	// (ALTER TABLE ... ENABLE ROW LEVEL SECURITY may be in a file that sorts
 	// before the CREATE TABLE file, so the table did not exist on first pass).
