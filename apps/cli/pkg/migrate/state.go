@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -67,9 +68,25 @@ func Checksum(content []byte) string {
 }
 
 // TimestampFilename returns a migration filename of the form
-// YYYYMMDD_HHMMSS[_label].sql using the current UTC time.
+// YYYYMMDD_HHMMSS_mmm[_label].sql using the current UTC time.
+//
+// The 3-digit millisecond component (mmm) ensures filenames generated within
+// the same wall-clock second still sort in generation order. Older filenames
+// using the legacy YYYYMMDD_HHMMSS[_label].sql format remain valid: see
+// MigrationFilenamePattern / ParseMigrationFilename.
 func TimestampFilename(label string) string {
-	ts := time.Now().UTC().Format("20060102_150405")
+	return timestampFilenameAt(time.Now().UTC(), label)
+}
+
+// timestampFilenameAt is the deterministic core of TimestampFilename, factored
+// out so tests can supply a fixed instant.
+func timestampFilenameAt(now time.Time, label string) string {
+	now = now.UTC()
+	// Build "YYYYMMDD_HHMMSS_mmm" manually so we always emit a three-digit
+	// millisecond field (Format's ".000" would prepend a literal '.').
+	ts := fmt.Sprintf("%s_%03d",
+		now.Format("20060102_150405"),
+		now.Nanosecond()/int(time.Millisecond))
 	if label == "" {
 		return ts + ".sql"
 	}
@@ -84,6 +101,44 @@ func TimestampFilename(label string) string {
 		}
 	}
 	return ts + "_" + string(safe) + ".sql"
+}
+
+// MigrationFilenamePattern matches both the legacy and current migration
+// filename formats:
+//
+//   - legacy:  YYYYMMDD_HHMMSS[_label].sql           (14-digit timestamp)
+//   - current: YYYYMMDD_HHMMSS_mmm[_label].sql       (14-digit + 3-digit millis)
+//
+// Submatches: [1]=date (YYYYMMDD), [2]=clock (HHMMSS), [3]=millis ("" for
+// legacy), [4]=label ("" when absent). Use ParseMigrationFilename for a typed
+// view.
+var MigrationFilenamePattern = regexp.MustCompile(
+	`^(\d{8})_(\d{6})(?:_(\d{3}))?(?:_([A-Za-z0-9_]+))?\.sql$`,
+)
+
+// ParsedMigrationFilename describes a migration filename's components.
+type ParsedMigrationFilename struct {
+	Date   string // YYYYMMDD
+	Clock  string // HHMMSS
+	Millis string // mmm, empty for legacy filenames
+	Label  string // empty when no label
+}
+
+// ParseMigrationFilename parses a migration filename (basename only) and
+// returns its components. Returns ok=false if the name does not match the
+// expected layout. Both legacy (no millis) and current (millis) formats are
+// accepted.
+func ParseMigrationFilename(name string) (ParsedMigrationFilename, bool) {
+	m := MigrationFilenamePattern.FindStringSubmatch(name)
+	if m == nil {
+		return ParsedMigrationFilename{}, false
+	}
+	return ParsedMigrationFilename{
+		Date:   m[1],
+		Clock:  m[2],
+		Millis: m[3],
+		Label:  m[4],
+	}, true
 }
 
 // quoteIdent double-quotes a PostgreSQL identifier.
