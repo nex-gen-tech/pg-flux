@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,6 +160,34 @@ func newRoot() *cobra.Command {
 	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdDump(), cmdVerify(), cmdPull(), cmdGen(), cmdVersion())
 	silenceUsageRecursively(r)
 	return r
+}
+
+// humanWriter returns w when text-mode logging is active, or io.Discard when
+// the user selected --log-format=json. The point: a single text-vs-json switch
+// rather than emitting both the human progress lines and a structured INFO
+// stream side-by-side.
+func humanWriter(w io.Writer) io.Writer {
+	if obs.CurrentFormat() == obs.FormatJSON {
+		return io.Discard
+	}
+	return w
+}
+
+// humanPrintf writes to cmd.OutOrStdout() only when not in JSON mode. Use this
+// for the CLI's "Applied N migration(s)" / "Generated: ..." style summary lines
+// that would otherwise duplicate the structured `migrate.apply.summary` event.
+func humanPrintf(cmd *cobra.Command, format string, args ...any) {
+	if obs.CurrentFormat() == obs.FormatJSON {
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), format, args...)
+}
+
+func humanPrintln(cmd *cobra.Command, s string) {
+	if obs.CurrentFormat() == obs.FormatJSON {
+		return
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), s)
 }
 
 // silenceUsageRecursively sets SilenceUsage=true on the command and every descendant.
@@ -765,7 +794,7 @@ func cmdMigrateApply() *cobra.Command {
 				TrackingSchema:  trackingSchema,
 				DryRun:          dry,
 				ShadowDSN:       shadowDSNFlag,
-				Progress:        cmd.OutOrStdout(),
+				Progress:        humanWriter(cmd.OutOrStdout()),
 				Schemas:         parseSchemas(),
 				ForceAfterDrift: forceAfterDrift,
 			})
@@ -773,9 +802,9 @@ func cmdMigrateApply() *cobra.Command {
 				return err
 			}
 			if dry {
-				fmt.Fprintf(cmd.OutOrStdout(), "\nDry run: %d pending, %d already applied.\n", len(res.Applied), len(res.Skipped))
+				humanPrintf(cmd, "\nDry run: %d pending, %d already applied.\n", len(res.Applied), len(res.Skipped))
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "\nApplied %d migration(s), %d already up to date.\n", len(res.Applied), len(res.Skipped))
+				humanPrintf(cmd, "\nApplied %d migration(s), %d already up to date.\n", len(res.Applied), len(res.Skipped))
 			}
 			return nil
 		},
@@ -996,7 +1025,7 @@ func cmdApply() *cobra.Command {
 			return exec.Apply(ctx, pool, dr.Plan, exec.Options{
 				DryRun:           dry,
 				StatementTimeout: stmtTimeout,
-				Progress:         cmd.OutOrStdout(),
+				Progress:         humanWriter(cmd.OutOrStdout()),
 			})
 		},
 	}

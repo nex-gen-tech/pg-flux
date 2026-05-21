@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	mu     sync.RWMutex
-	logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	mu        sync.RWMutex
+	logger    = slog.New(slog.NewTextHandler(io.Discard, nil))
+	curFormat = FormatText
 )
 
 // Format selects the log output format.
@@ -27,14 +28,27 @@ const (
 )
 
 // Init configures the package-level logger. dest defaults to os.Stderr when nil.
-// verbose=true sets the level to Debug; otherwise Info. Safe to call multiple times.
+//
+// Level policy:
+//   - verbose=true:  Debug — every event is emitted, regardless of format.
+//   - format=json:   Info — full structured stream for machine consumption.
+//   - format=text:   Warn — drops INFO chatter so the CLI's human progress lines
+//                    aren't duplicated by a parallel `time=... level=INFO msg=...`
+//                    stream on stderr. Errors and warnings still surface.
+//
+// Safe to call multiple times.
 func Init(format Format, verbose bool, dest io.Writer) {
 	if dest == nil {
 		dest = os.Stderr
 	}
-	level := slog.LevelInfo
-	if verbose {
+	var level slog.Level
+	switch {
+	case verbose:
 		level = slog.LevelDebug
+	case format == FormatJSON:
+		level = slog.LevelInfo
+	default: // text mode without verbose
+		level = slog.LevelWarn
 	}
 	opts := &slog.HandlerOptions{Level: level}
 	var h slog.Handler
@@ -46,7 +60,20 @@ func Init(format Format, verbose bool, dest io.Writer) {
 	}
 	mu.Lock()
 	logger = slog.New(h)
+	curFormat = format
+	if curFormat == "" {
+		curFormat = FormatText
+	}
 	mu.Unlock()
+}
+
+// CurrentFormat returns the log format selected by the last Init call. Defaults
+// to FormatText before Init runs. Useful for callers that want to suppress their
+// own human-readable output when JSON logging is active.
+func CurrentFormat() Format {
+	mu.RLock()
+	defer mu.RUnlock()
+	return curFormat
 }
 
 // Logger returns the configured logger. Always non-nil.
