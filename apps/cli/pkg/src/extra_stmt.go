@@ -49,10 +49,22 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 	case *pgq.Node_AlterExtensionStmt:
 		return captureAlterExtension(n.AlterExtensionStmt, raw, st)
 	case *pgq.Node_CreateForeignServerStmt:
+		// Capture structured so verify/dump can compare against live.ForeignServers.
+		if err := captureForeignServer(n.CreateForeignServerStmt, st); err != nil {
+			return err
+		}
 		return captureDeparsedMisc("FDW_SERVER", raw, st)
 	case *pgq.Node_CreateForeignTableStmt:
+		// Capture structured so verify/dump can compare against live.ForeignTables.
+		if err := captureForeignTable(n.CreateForeignTableStmt, st); err != nil {
+			return err
+		}
 		return captureDeparsedMisc("FOREIGN_TABLE", raw, st)
 	case *pgq.Node_CreatePublicationStmt:
+		// Capture structured so verify can compare against live.Publications.
+		if err := capturePublication(n.CreatePublicationStmt, st); err != nil {
+			return err
+		}
 		return captureDeparsedMisc("PUBLICATION", raw, st)
 	// PRD v2 / V2-A: type and schema DDL must not be silently dropped (pass-through in plan order).
 	case *pgq.Node_CreateDomainStmt:
@@ -68,7 +80,22 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 			return err
 		}
 		return captureDeparsedExtraDDL(raw, st)
-	case *pgq.Node_DefineStmt, *pgq.Node_CreateEnumStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
+	case *pgq.Node_CreateEnumStmt:
+		// Capture structured enum values (schema.name → ordered labels) so the
+		// dump.Verify command can see CREATE TYPE ... AS ENUM declarations and not
+		// flag them as undeclared live objects. Keep the raw DDL so apply still
+		// issues CREATE TYPE at first apply.
+		if err := captureCreateEnum(n.CreateEnumStmt, st); err != nil {
+			return err
+		}
+		return captureDeparsedExtraDDL(raw, st)
+	case *pgq.Node_CreateRangeStmt:
+		// Capture structured range type so verify/dump see the declaration.
+		if err := captureCreateRange(n.CreateRangeStmt, st); err != nil {
+			return err
+		}
+		return captureDeparsedExtraDDL(raw, st)
+	case *pgq.Node_DefineStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
 		return captureDeparsedExtraDDL(raw, st)
 	// GRANT / REVOKE: capture structured privilege entries onto the target objects
 	// so the differ can compute set-diffs and emit minimal DDL. Object kinds we

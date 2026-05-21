@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 
 	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
@@ -13,22 +12,23 @@ import (
 // missing from the desired/source state. The dump command uses this to enforce
 // "everything in live must be declared in source" as a CI gate.
 type VerifyReport struct {
-	Tables           []string
-	Views            []string
-	Sequences        []string
-	Indexes          []string
-	Functions        []string
-	Triggers         []string
-	Policies         []string
-	Enums            []string
-	Domains          []string
-	CompositeTypes   []string
-	RangeTypes       []string
-	ForeignTables    []string
-	ForeignServers   []string
-	EventTriggers    []string
-	Statistics       []string
-	Extensions       []string
+	Tables         []string
+	Views          []string
+	Sequences      []string
+	Indexes        []string
+	Functions      []string
+	Triggers       []string
+	Policies       []string
+	Enums          []string
+	Domains        []string
+	CompositeTypes []string
+	RangeTypes     []string
+	ForeignTables  []string
+	ForeignServers []string
+	EventTriggers  []string
+	Statistics     []string
+	Extensions     []string
+	Publications   []string
 }
 
 // Count returns the total number of undeclared objects across all kinds.
@@ -37,7 +37,7 @@ func (r *VerifyReport) Count() int {
 		len(r.Functions) + len(r.Triggers) + len(r.Policies) + len(r.Enums) +
 		len(r.Domains) + len(r.CompositeTypes) + len(r.RangeTypes) +
 		len(r.ForeignTables) + len(r.ForeignServers) + len(r.EventTriggers) +
-		len(r.Statistics) + len(r.Extensions)
+		len(r.Statistics) + len(r.Extensions) + len(r.Publications)
 }
 
 // WriteText renders the report as a human-readable grouped list.
@@ -62,6 +62,7 @@ func (r *VerifyReport) WriteText(w io.Writer) {
 		{"Statistics", r.Statistics},
 		{"Foreign servers", r.ForeignServers},
 		{"Foreign tables", r.ForeignTables},
+		{"Publications", r.Publications},
 	}
 	total := r.Count()
 	if total == 0 {
@@ -93,24 +94,6 @@ func Verify(desired, live *schema.SchemaState) *VerifyReport {
 	if desired == nil {
 		desired = &schema.SchemaState{}
 	}
-	missingStrings := func(d, l map[string]struct{}) []string {
-		var out []string
-		for k := range l {
-			if _, ok := d[k]; !ok {
-				out = append(out, k)
-			}
-		}
-		sort.Strings(out)
-		return out
-	}
-	missing := func(d, l interface{ /* generic map[string]T */ }) []string {
-		// Use reflection-free explicit checks per call site below; this helper
-		// is unused but kept as a placeholder to remind future devs of the pattern.
-		_ = d
-		_ = l
-		return nil
-	}
-	_ = missing
 
 	// Tables / views / sequences / indexes etc. use map[string]*T — write per-kind
 	// helpers inline; generics would simplify but cost a dependency.
@@ -243,9 +226,15 @@ func Verify(desired, live *schema.SchemaState) *VerifyReport {
 			r.Extensions = append(r.Extensions, k)
 		}
 	}
+	for k, v := range live.Publications {
+		if v == nil {
+			continue
+		}
+		if _, ok := desired.Publications[k]; !ok {
+			r.Publications = append(r.Publications, k)
+		}
+	}
 	sortAll(r)
-	// Drop _ = missingStrings import — keep the helper available for tests/future use.
-	_ = missingStrings
 	return r
 }
 
@@ -254,8 +243,8 @@ func sortAll(r *VerifyReport) {
 		r.Tables, r.Views, r.Sequences, r.Indexes, r.Functions, r.Triggers,
 		r.Policies, r.Enums, r.Domains, r.CompositeTypes, r.RangeTypes,
 		r.ForeignTables, r.ForeignServers, r.EventTriggers, r.Statistics, r.Extensions,
+		r.Publications,
 	} {
 		sort.Strings(sl)
 	}
-	_ = strings.Compare // keep strings import slot stable
 }
