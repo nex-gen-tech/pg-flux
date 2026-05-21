@@ -3,7 +3,7 @@
 **Date:** 2026-05-22
 **Version assessed:** v0.1.0
 **Evidence base:** fastapi-todo + express-bookmarks examples — 38 real schema mutations across 2 domains, driven end-to-end by a first-time user persona.
-**Reference:** [PRD v2](../../../apps/cli/docs/prd/PRD-v2-robustness.md) · [ROADMAP](../../../ROADMAP.md)
+**Reference:** [PRD v2](../../apps/cli/docs/prd/PRD-v2-robustness.md) · [ROADMAP](../../ROADMAP.md)
 
 ---
 

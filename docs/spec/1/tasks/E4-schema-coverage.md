@@ -1,7 +1,7 @@
 # Epic 4 — Schema Object Coverage
 
 **Priority:** P1 (type model) / P2 (partitions) — aligns with PRD v2 V2-A and V2-B milestones.
-**Spec ref:** [Spec 1 §Open Gaps G5, G6](../spec/1/spec.md)
+**Spec ref:** [Spec 1 §Open Gaps G5, G6](../spec.md)
 **PRD ref:** [PRD v2 §3.3, FR2-01 – FR2-05](../../../apps/cli/docs/prd/PRD-v2-robustness.md)
 
 ---

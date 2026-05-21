@@ -1,7 +1,7 @@
 # Epic 6 — Examples & Documentation
 
 **Priority:** P2 — validation layer; also regression gate for all prior bug fixes.
-**Spec ref:** [Spec 1](../spec/1/spec.md)
+**Spec ref:** [Spec 1](../spec.md)
 **Depends on:** E1-T1, E2-T1, E2-T2, E5-T1
 
 ---

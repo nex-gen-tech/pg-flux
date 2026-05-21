@@ -1,7 +1,7 @@
 # Epic 1 — Critical Bug Fixes
 
 **Priority:** P0 — must land before Epic 2 and before any new example apps.
-**Spec ref:** [Spec 1 §Open Gaps G1, G7, G8](../spec/1/spec.md)
+**Spec ref:** [Spec 1 §Open Gaps G1, G7, G8](../spec.md)
 
 ---
 

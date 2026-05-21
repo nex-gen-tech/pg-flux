@@ -1,7 +1,7 @@
 # Epic 3 — Developer Experience Polish
 
 **Priority:** P1 — friction reduction; does not block CI story but directly affects interactive workflow.
-**Spec ref:** [Spec 1 §Open Gaps G8, G9](../spec/1/spec.md)
+**Spec ref:** [Spec 1 §Open Gaps G8, G9](../spec.md)
 
 ---
 

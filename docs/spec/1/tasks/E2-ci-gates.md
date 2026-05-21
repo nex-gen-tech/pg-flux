@@ -1,7 +1,7 @@
 # Epic 2 — CI Gate Reliability
 
 **Priority:** P0 — drift + verify must be safe to hard-gate in CI.
-**Spec ref:** [Spec 1 §Open Gaps G2, G3, G4](../spec/1/spec.md)
+**Spec ref:** [Spec 1 §Open Gaps G2, G3, G4](../spec.md)
 **Depends on:** E1-T1 (express-bookmarks regeneration requires the rename fix first)
 
 ---

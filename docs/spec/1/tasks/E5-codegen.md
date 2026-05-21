@@ -1,7 +1,7 @@
 # Epic 5 — Codegen
 
 **Priority:** P2 — ecosystem expansion; closes the gap for Python users.
-**Spec ref:** [Spec 1 §Open Gaps G10](../spec/1/spec.md)
+**Spec ref:** [Spec 1 §Open Gaps G10](../spec.md)
 **Roadmap ref:** [ROADMAP v0.3 — Python emitter](../../../ROADMAP.md)
 
 ---
