@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nexg/pg-flux/pkg/hashstate"
-	"github.com/nexg/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/hashstate"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
 )
 
 // BaselineDriftError is returned by Apply when the live DB no longer matches

@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nexg/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
 )
 
 // TestViewColumns_realInference proves the inspector → codegen path emits real

@@ -66,7 +66,7 @@ jobs:
           cache-dependency-path: apps/cli/go.sum
 
       - name: install pg-flux
-        run: go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+        run: go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 
       - name: bring schema to current
         env:
@@ -106,7 +106,7 @@ jobs:
     needs: schema-check
     steps:
       - uses: actions/checkout@v4
-      - run: go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+      - run: go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
       - name: drift check vs production
         env:
           DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
@@ -130,7 +130,7 @@ Append a job that runs only on `main`:
     environment: staging  # gates on GitHub environment protection rules
     steps:
       - uses: actions/checkout@v4
-      - run: go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+      - run: go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 
       - name: apply migrations
         env:
@@ -166,7 +166,7 @@ schema:check:
         POSTGRES_PASSWORD: pgflux
         POSTGRES_DB: pgflux
   script:
-    - go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+    - go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
     - pg-flux migrate apply
     - pg-flux gen --check
     - pg-flux verify --strict
@@ -180,7 +180,7 @@ migrate:staging:
   variables:
     DATABASE_URL: ${STAGING_DATABASE_URL}
   script:
-    - go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+    - go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
     - pg-flux migrate apply
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -206,7 +206,7 @@ jobs:
           POSTGRES_PASSWORD: pgflux
     steps:
       - checkout
-      - run: go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+      - run: go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
       - run:
           name: wait for postgres
           command: |
@@ -313,7 +313,7 @@ Example GitHub Actions production job:
       url: https://your-app.example.com
     steps:
       - uses: actions/checkout@v4
-      - run: go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+      - run: go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 
       - name: shadow-validate first
         env:

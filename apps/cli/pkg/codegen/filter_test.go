@@ -3,7 +3,7 @@ package codegen
 import (
 	"testing"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 func TestFilter_emptyPassesEverything(t *testing.T) {

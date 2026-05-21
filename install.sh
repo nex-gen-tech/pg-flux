@@ -2,7 +2,7 @@
 #
 # pg-flux installer
 #
-#   curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | sh
+#   curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | sh
 #
 # Environment variables:
 #   PGFLUX_VERSION  Tag to install (default: latest release).
@@ -13,7 +13,7 @@
 
 set -eu
 
-REPO="nexg/pg-flux"
+REPO="nex-gen-tech/pg-flux"
 BIN_NAME="pg-flux"
 
 red()    { printf "\033[31m%s\033[0m\n" "$1"; }

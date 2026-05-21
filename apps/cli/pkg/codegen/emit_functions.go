@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // shouldEmitFn reports whether codegen should emit types for a given function.

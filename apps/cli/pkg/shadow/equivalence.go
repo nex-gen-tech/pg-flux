@@ -8,10 +8,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nexg/pg-flux/pkg/differ"
-	"github.com/nexg/pg-flux/pkg/inspector"
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/differ"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // ValidateStructuralEquivalence applies the full plan to an empty disposable database (semantic apply),

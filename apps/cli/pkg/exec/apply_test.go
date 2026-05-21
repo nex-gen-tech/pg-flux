@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/nexg/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 )
 
 func TestApply_EmptyPlan(t *testing.T) {

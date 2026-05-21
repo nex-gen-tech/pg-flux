@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nexg/pg-flux/pkg/src"
+	"github.com/nex-gen-tech/pg-flux/pkg/src"
 )
 
 // dsnFromEnv returns the integration-test DSN.

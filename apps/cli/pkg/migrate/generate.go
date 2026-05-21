@@ -9,11 +9,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nexg/pg-flux/pkg/differ"
-	"github.com/nexg/pg-flux/pkg/hashstate"
-	"github.com/nexg/pg-flux/pkg/inspector"
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/differ"
+	"github.com/nex-gen-tech/pg-flux/pkg/hashstate"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // BaselineHashHeader is the comment marker embedded in each generated migration

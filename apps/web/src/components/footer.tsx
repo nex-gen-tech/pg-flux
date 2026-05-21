@@ -29,10 +29,10 @@ const GROUPS: LinkGroup[] = [
   {
     title: "Community",
     links: [
-      { label: "GitHub", href: "https://github.com/nexg/pg-flux", external: true },
-      { label: "Issues", href: "https://github.com/nexg/pg-flux/issues", external: true },
-      { label: "Discussions", href: "https://github.com/nexg/pg-flux/discussions", external: true },
-      { label: "Releases", href: "https://github.com/nexg/pg-flux/releases", external: true },
+      { label: "GitHub", href: "https://github.com/nex-gen-tech/pg-flux", external: true },
+      { label: "Issues", href: "https://github.com/nex-gen-tech/pg-flux/issues", external: true },
+      { label: "Discussions", href: "https://github.com/nex-gen-tech/pg-flux/discussions", external: true },
+      { label: "Releases", href: "https://github.com/nex-gen-tech/pg-flux/releases", external: true },
     ],
   },
 ];
@@ -54,7 +54,7 @@ export function Footer() {
             </p>
             <div className="mt-5 flex items-center gap-3 text-muted-foreground">
               <a
-                href="https://github.com/nexg/pg-flux"
+                href="https://github.com/nex-gen-tech/pg-flux"
                 target="_blank"
                 rel="noopener"
                 aria-label="GitHub"
@@ -96,7 +96,7 @@ export function Footer() {
           <p>
             © {new Date().getFullYear()} pg-flux contributors. Released under the{" "}
             <a
-              href="https://github.com/nexg/pg-flux/blob/main/LICENSE"
+              href="https://github.com/nex-gen-tech/pg-flux/blob/main/LICENSE"
               className="hover:text-foreground"
               target="_blank"
               rel="noopener"

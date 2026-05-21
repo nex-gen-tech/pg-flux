@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/nexg/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
 )
 
 // TestInspector_RLSAndPolicies uses Docker to exercise catalog paths for RLS and policies

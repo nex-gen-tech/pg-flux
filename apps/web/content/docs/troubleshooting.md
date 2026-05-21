@@ -5,7 +5,7 @@ order: 6
 description: Every error you'll hit, what it means, what to do.
 ---
 
-If pg-flux is yelling at you, find the message below. If it isn't here, [open an issue](https://github.com/nexg/pg-flux/issues/new) — these entries get added every time a real user gets stuck.
+If pg-flux is yelling at you, find the message below. If it isn't here, [open an issue](https://github.com/nex-gen-tech/pg-flux/issues/new) — these entries get added every time a real user gets stuck.
 
 ## Connection errors
 
@@ -205,7 +205,7 @@ pg-flux's version gates work at generate time. The fix is either:
 - Upgrade your target PG to a version that supports the feature
 - Don't use the feature
 
-If you think pg-flux is wrong about the gate, [file an issue](https://github.com/nexg/pg-flux/issues/new).
+If you think pg-flux is wrong about the gate, [file an issue](https://github.com/nex-gen-tech/pg-flux/issues/new).
 
 ## Codegen errors
 
@@ -368,4 +368,4 @@ pg-flux inspect > /tmp/live.sql
 pg-flux drift
 ```
 
-If you've exhausted these and pg-flux is still not behaving — [open a bug](https://github.com/nexg/pg-flux/issues/new?template=bug_report.md) with the structured log output, the exact pg-flux + PG versions, and the smallest reproducing schema.
+If you've exhausted these and pg-flux is still not behaving — [open a bug](https://github.com/nex-gen-tech/pg-flux/issues/new?template=bug_report.md) with the structured log output, the exact pg-flux + PG versions, and the smallest reproducing schema.

@@ -71,5 +71,5 @@ The first public release. The point of v0.1 is: "this works against real PG 14-1
 - [shadcn-ui/ui](https://github.com/shadcn-ui/ui) — the component primitives behind the docs site.
 - The PostgreSQL team for building the database we're trying to help you manage.
 
-[Unreleased]: https://github.com/nexg/pg-flux/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/nexg/pg-flux/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/nex-gen-tech/pg-flux/releases/tag/v0.1.0

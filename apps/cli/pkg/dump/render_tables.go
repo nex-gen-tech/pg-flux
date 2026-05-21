@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/differ"
-	"github.com/nexg/pg-flux/pkg/pgver"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/differ"
+	"github.com/nex-gen-tech/pg-flux/pkg/pgver"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // sort keys: types/sequences before tables, tables before indexes/views, etc.

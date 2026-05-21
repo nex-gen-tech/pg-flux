@@ -1,6 +1,6 @@
 package dag
 
-import "github.com/nexg/pg-flux/pkg/plan"
+import "github.com/nex-gen-tech/pg-flux/pkg/plan"
 
 // priority orders kinds for creation-style DDL.
 var createOrder = map[string]int{

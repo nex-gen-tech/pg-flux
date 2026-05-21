@@ -3,8 +3,8 @@ package differ
 import (
 	"fmt"
 
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // diffCompositeTypes emits per-attribute ALTER TYPE statements for composite types

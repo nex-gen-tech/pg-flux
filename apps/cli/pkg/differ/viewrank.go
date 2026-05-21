@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 var reViewFrom = regexp.MustCompile(`(?i)\b(?:from|join)\s+([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*|[a-z_][a-z0-9_]*)`)

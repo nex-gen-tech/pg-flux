@@ -3,8 +3,8 @@ package differ
 import (
 	"fmt"
 
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // diffRangeTypes emits DROP TYPE for range types removed from desired. Creates

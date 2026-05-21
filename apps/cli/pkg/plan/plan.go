@@ -1,6 +1,6 @@
 package plan
 
-import "github.com/nexg/pg-flux/pkg/hazard"
+import "github.com/nex-gen-tech/pg-flux/pkg/hazard"
 
 // ChangeType enumerates diff operations.
 type ChangeType string

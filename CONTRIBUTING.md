@@ -37,7 +37,7 @@ You need:
 - **PostgreSQL client tools** (`psql`) for the matrix harness
 
 ```bash
-git clone https://github.com/nexg/pg-flux.git
+git clone https://github.com/nex-gen-tech/pg-flux.git
 cd pg-flux
 
 # build the CLI

@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nexg/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 )
 
 func TestApply_embeddedPostgres(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // OfSchemaState returns a stable hex digest of the model (for JSON metadata).

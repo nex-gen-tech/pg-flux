@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/nexg/pg-flux/pkg/hazard"
+	"github.com/nex-gen-tech/pg-flux/pkg/hazard"
 )
 
 func TestHasBlockingHazards_Allow(t *testing.T) {

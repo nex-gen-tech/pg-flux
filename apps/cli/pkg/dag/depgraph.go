@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // ErrDependencyCycle is returned when statement-level dependencies form a cycle.

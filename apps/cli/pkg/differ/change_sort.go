@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/dag"
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/dag"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // sortChangesDeterministic orders changes so the same input graph always yields the same

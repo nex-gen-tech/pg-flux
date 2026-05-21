@@ -76,7 +76,7 @@ function Hero() {
               </a>
             </Button>
             <Button asChild size="lg" variant="outline">
-              <a href="https://github.com/nexg/pg-flux" target="_blank" rel="noopener">
+              <a href="https://github.com/nex-gen-tech/pg-flux" target="_blank" rel="noopener">
                 View on GitHub
               </a>
             </Button>
@@ -323,7 +323,7 @@ function CTA() {
           <div className="mt-6 inline-flex flex-col gap-2 rounded-lg border border-code-border bg-code-bg px-5 py-3 text-left font-mono text-sm">
             <code className="text-foreground">
               <span className="text-primary">$</span> go install
-              github.com/nexg/pg-flux/cmd/pg-flux@latest
+              github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
             </code>
             <code className="text-foreground">
               <span className="text-primary">$</span> pg-flux init

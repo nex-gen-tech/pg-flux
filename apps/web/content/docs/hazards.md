@@ -248,4 +248,4 @@ pg-flux is conservative by design — it'd rather refuse a safe migration than a
 pg-flux migrate apply --allow-hazards=DATA_LOSS
 ```
 
-If you hit a hazard you think is mis-classified (i.e., pg-flux is wrong about whether it's dangerous), [file an issue](https://github.com/nexg/pg-flux/issues/new) with the migration. Hazard classifications get refined over time as real cases come in.
+If you hit a hazard you think is mis-classified (i.e., pg-flux is wrong about whether it's dangerous), [file an issue](https://github.com/nex-gen-tech/pg-flux/issues/new) with the migration. Hazard classifications get refined over time as real cases come in.

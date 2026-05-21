@@ -58,4 +58,4 @@ These exist on the roadmap explicitly to **not** happen. Save the GitHub issues:
 
 ## Want something on this list?
 
-Open a [Discussion](https://github.com/nexg/pg-flux/discussions) — not an Issue. Issues are for bugs and concrete feature proposals; Discussions are for "should pg-flux do X?" conversations where the answer might be no.
+Open a [Discussion](https://github.com/nex-gen-tech/pg-flux/discussions) — not an Issue. Issues are for bugs and concrete feature proposals; Discussions are for "should pg-flux do X?" conversations where the answer might be no.

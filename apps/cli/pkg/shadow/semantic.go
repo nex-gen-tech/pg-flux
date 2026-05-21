@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nexg/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 )
 
 // shadowLockID derives a deterministic advisory lock ID from a connection string.

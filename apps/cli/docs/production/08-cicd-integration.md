@@ -59,7 +59,7 @@ jobs:
 
       - name: Install pg-flux
         run: |
-          go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+          go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 
       - name: Apply all migrations to test DB
         env:
@@ -100,7 +100,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install pg-flux
-        run: go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+        run: go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 
       # Validate against a shadow copy of production before touching live
       - name: Shadow validation
@@ -155,7 +155,7 @@ schema-check:
     POSTGRES_DB: testdb
     PGFLUX_DB: postgres://pgflux:pgflux@postgres:5432/testdb
   script:
-    - go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+    - go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
     - pg-flux migrate apply
     - |
       if pg-flux migrate generate | grep -q "Generated:"; then
@@ -170,7 +170,7 @@ deploy-production:
   environment: production
   when: manual
   script:
-    - go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+    - go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
     - pg-flux migrate apply --shadow-dsn "$SHADOW_DATABASE_URL" --shadow-semantic
   only:
     - main
@@ -261,7 +261,7 @@ For Kubernetes deployments, run pg-flux as an init container so migrations compl
 ```yaml
 initContainers:
   - name: pg-flux-migrate
-    image: ghcr.io/nexg/pg-flux:latest
+    image: ghcr.io/nex-gen-tech/pg-flux:latest
     command: ["pg-flux", "migrate", "apply"]
     env:
       - name: PGFLUX_DB

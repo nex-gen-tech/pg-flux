@@ -1,7 +1,7 @@
 // Package schema holds the internal schema model shared by the parser, inspector, and differ.
 package schema
 
-import "github.com/nexg/pg-flux/pkg/pgver"
+import "github.com/nex-gen-tech/pg-flux/pkg/pgver"
 
 // SchemaState is the merged desired or live view of a database namespace subset.
 type SchemaState struct {

@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/pgver"
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/pgver"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // diffViewAttrs emits ALTER VIEW SET (option = value) / RESET (option) statements

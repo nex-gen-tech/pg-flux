@@ -12,7 +12,7 @@ Pick the install path that matches your taste. All of them give you the same `pg
 One command. No Go required.
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | sh
+curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | sh
 ```
 
 What it does:
@@ -32,32 +32,32 @@ pg-flux v0.1.0
 ```
 
 > [!TIP]
-> Pin to a specific version: `curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | PGFLUX_VERSION=v0.1.0 sh`.
+> Pin to a specific version: `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | PGFLUX_VERSION=v0.1.0 sh`.
 > Override the install directory: `... | PGFLUX_BIN_DIR=$HOME/.local/bin sh`.
 
 ## Manual binary download
 
-If you'd rather not pipe a script into your shell, grab the binary directly from [GitHub Releases](https://github.com/nexg/pg-flux/releases).
+If you'd rather not pipe a script into your shell, grab the binary directly from [GitHub Releases](https://github.com/nex-gen-tech/pg-flux/releases).
 
 ```bash
 # macOS Apple Silicon
-curl -sSfL -o pg-flux.tar.gz https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-darwin-arm64.tar.gz
+curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-darwin-arm64.tar.gz
 tar -xzf pg-flux.tar.gz
 sudo mv pg-flux /usr/local/bin/
 pg-flux version
 
 # macOS Intel
-curl -sSfL -o pg-flux.tar.gz https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-darwin-amd64.tar.gz
+curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-darwin-amd64.tar.gz
 tar -xzf pg-flux.tar.gz
 sudo mv pg-flux /usr/local/bin/
 
 # Linux x86_64
-curl -sSfL -o pg-flux.tar.gz https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-linux-amd64.tar.gz
+curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-linux-amd64.tar.gz
 tar -xzf pg-flux.tar.gz
 sudo mv pg-flux /usr/local/bin/
 
 # Linux ARM64
-curl -sSfL -o pg-flux.tar.gz https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-linux-arm64.tar.gz
+curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-linux-arm64.tar.gz
 tar -xzf pg-flux.tar.gz
 sudo mv pg-flux /usr/local/bin/
 ```
@@ -65,7 +65,7 @@ sudo mv pg-flux /usr/local/bin/
 Always verify the checksum if you download manually:
 
 ```bash
-curl -sSfL -o SHA256SUMS https://github.com/nexg/pg-flux/releases/latest/download/SHA256SUMS
+curl -sSfL -o SHA256SUMS https://github.com/nex-gen-tech/pg-flux/releases/latest/download/SHA256SUMS
 shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
@@ -78,7 +78,7 @@ shasum -a 256 -c SHA256SUMS --ignore-missing
 If you already have Go 1.25+ and would rather build the binary yourself:
 
 ```bash
-go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 ```
 
 The binary lands in `$GOBIN` (or `$GOPATH/bin` if `GOBIN` isn't set). Make sure that directory is on your `PATH`:
@@ -95,7 +95,7 @@ Pin to a specific tag with `@v0.1.0` instead of `@latest`.
 If you want to build from source — for development, custom patches, or to verify the binary you're using matches HEAD:
 
 ```bash
-git clone https://github.com/nexg/pg-flux.git
+git clone https://github.com/nex-gen-tech/pg-flux.git
 cd pg-flux/apps/cli
 go build -o pg-flux ./cmd/pg-flux
 ./pg-flux version
@@ -115,7 +115,7 @@ A container image is on the roadmap. For now, install via Go in your container:
 
 ```dockerfile
 FROM golang:1.25 AS pgflux
-RUN go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+RUN go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 
 FROM debian:stable-slim
 COPY --from=pgflux /go/bin/pg-flux /usr/local/bin/
@@ -177,7 +177,7 @@ For working on pg-flux itself (not just using it):
 | **Bun 1.3+** | Build the docs site |
 | **`entr`** | Optional, for auto-rebuild on file changes |
 
-The full dev setup is documented in [CONTRIBUTING.md](https://github.com/nexg/pg-flux/blob/main/CONTRIBUTING.md).
+The full dev setup is documented in [CONTRIBUTING.md](https://github.com/nex-gen-tech/pg-flux/blob/main/CONTRIBUTING.md).
 
 ## What's next?
 

@@ -14,10 +14,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nexg/pg-flux/pkg/differ"
-	"github.com/nexg/pg-flux/pkg/inspector"
-	"github.com/nexg/pg-flux/pkg/pgver"
-	"github.com/nexg/pg-flux/pkg/src"
+	"github.com/nex-gen-tech/pg-flux/pkg/differ"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/pgver"
+	"github.com/nex-gen-tech/pg-flux/pkg/src"
 )
 
 func adminDSN() string {

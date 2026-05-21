@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // VerifyReport lists per-kind sets of object identifiers present in live but

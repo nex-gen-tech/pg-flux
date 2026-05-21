@@ -14,12 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/nexg/pg-flux/pkg/db"
-	"github.com/nexg/pg-flux/pkg/differ"
-	"github.com/nexg/pg-flux/pkg/exec"
-	"github.com/nexg/pg-flux/pkg/inspector"
-	"github.com/nexg/pg-flux/pkg/shadow"
-	"github.com/nexg/pg-flux/pkg/src"
+	"github.com/nex-gen-tech/pg-flux/pkg/db"
+	"github.com/nex-gen-tech/pg-flux/pkg/differ"
+	"github.com/nex-gen-tech/pg-flux/pkg/exec"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/shadow"
+	"github.com/nex-gen-tech/pg-flux/pkg/src"
 )
 
 func waitForPostgres(ctx context.Context, po *pgxpool.Pool) error {

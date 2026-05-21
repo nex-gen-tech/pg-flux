@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // diffStatistics compares desired vs live pg_statistic_ext entries:

@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nexg/pg-flux/pkg/obs"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/obs"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // loadRareObjects populates inspectors for OPERATOR / OPERATOR CLASS / OPERATOR

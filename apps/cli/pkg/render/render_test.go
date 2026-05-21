@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/nexg/pg-flux/pkg/hazard"
-	"github.com/nexg/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/hazard"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

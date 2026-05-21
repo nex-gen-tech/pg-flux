@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nexg/pg-flux/pkg/pgver"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/pgver"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // PullOptions controls Pull.

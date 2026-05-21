@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // TypeMap is the per-language PG-type → language-type resolver. Defined here

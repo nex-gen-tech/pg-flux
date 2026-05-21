@@ -14,7 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nexg/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 )
 
 // ValidateSyntaxInTxn runs each non-concurrent DDL in a single transaction and rolls back.

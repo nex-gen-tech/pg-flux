@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/plan"
-	"github.com/nexg/pg-flux/pkg/schema"
-	"github.com/nexg/pg-flux/pkg/src"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/src"
 )
 
 // diffEventTriggers compares desired vs live event triggers.

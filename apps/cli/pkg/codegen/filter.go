@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // Filter restricts which objects flow through the generator. Patterns use

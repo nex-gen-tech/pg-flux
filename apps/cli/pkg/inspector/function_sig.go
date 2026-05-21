@@ -1,6 +1,6 @@
 package inspector
 
-import "github.com/nexg/pg-flux/pkg/schema"
+import "github.com/nex-gen-tech/pg-flux/pkg/schema"
 
 // buildFunctionSignature populates fn.Args / ReturnType / ReturnsSet / ReturnsTable
 // from the per-position arrays the pg_proc query returns.

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // FKCircularDependencyError reports a cycle in the desired FOREIGN KEY graph

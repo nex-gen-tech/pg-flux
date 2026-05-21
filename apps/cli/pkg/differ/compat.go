@@ -3,8 +3,8 @@ package differ
 import (
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/pgver"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/pgver"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // checkServerCompat walks the desired schema and returns an error when it references a

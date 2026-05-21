@@ -6,7 +6,7 @@ import (
 
 	pgq "github.com/pganalyze/pg_query_go/v6"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 func deparseOne(raw *pgq.RawStmt) (string, error) {

@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/nexg/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 )
 
 // WriteUndoFile generates an undo SQL file alongside the forward migration.

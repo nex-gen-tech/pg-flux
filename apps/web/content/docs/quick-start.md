@@ -10,10 +10,10 @@ Get from zero to a working pg-flux setup in five minutes. By the end of this gui
 ## Install
 
 ```bash
-go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 ```
 
-Or grab a binary from the [releases page](https://github.com/nexg/pg-flux/releases).
+Or grab a binary from the [releases page](https://github.com/nex-gen-tech/pg-flux/releases).
 
 Verify the install:
 

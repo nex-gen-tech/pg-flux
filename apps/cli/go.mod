@@ -1,4 +1,4 @@
-module github.com/nexg/pg-flux
+module github.com/nex-gen-tech/pg-flux
 
 go 1.25.0
 

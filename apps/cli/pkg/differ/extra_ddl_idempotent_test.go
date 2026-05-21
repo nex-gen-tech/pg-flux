@@ -3,7 +3,7 @@ package differ
 import (
 	"testing"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 	"github.com/stretchr/testify/require"
 )
 

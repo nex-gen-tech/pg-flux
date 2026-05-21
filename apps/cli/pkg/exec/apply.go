@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nexg/pg-flux/pkg/obs"
-	"github.com/nexg/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/obs"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 )
 
 // validTimeout is a conservative allowlist for PostgreSQL timeout values (e.g. "3s", "500ms", "1min", "0").

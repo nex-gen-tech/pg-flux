@@ -16,7 +16,7 @@
 ## Build from Source
 
 ```bash
-git clone https://github.com/nexg/pg-flux.git
+git clone https://github.com/nex-gen-tech/pg-flux.git
 cd pg-flux
 go build -o pg-flux ./cmd/pg-flux
 ```
@@ -24,7 +24,7 @@ go build -o pg-flux ./cmd/pg-flux
 To install directly into `$GOPATH/bin`:
 
 ```bash
-go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 ```
 
 Verify the build:
@@ -42,7 +42,7 @@ Pre-built binaries for Linux (amd64/arm64) and macOS (arm64) are attached to eac
 
 ```bash
 # macOS arm64
-curl -Lo pg-flux https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-darwin-arm64
+curl -Lo pg-flux https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-darwin-arm64
 chmod +x pg-flux
 sudo mv pg-flux /usr/local/bin/
 ```

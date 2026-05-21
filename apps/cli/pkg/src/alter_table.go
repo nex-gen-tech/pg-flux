@@ -5,7 +5,7 @@ import (
 
 	pgq "github.com/pganalyze/pg_query_go/v6"
 
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // captureAlterTable records RLS flags and/or pass-through partition DDL for ALTER TABLE.

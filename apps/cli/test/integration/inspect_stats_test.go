@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/nexg/pg-flux/pkg/db"
-	"github.com/nexg/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/db"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
 )
 
 func TestReltuples(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nexg/pg-flux/pkg/hazard"
-	"github.com/nexg/pg-flux/pkg/plan"
+	"github.com/nex-gen-tech/pg-flux/pkg/hazard"
+	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 )
 
 // PlanJSON is the structured output for `plan --format=json` (PRD FR-09 subset).

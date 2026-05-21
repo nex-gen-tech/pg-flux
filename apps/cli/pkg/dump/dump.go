@@ -15,10 +15,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nexg/pg-flux/pkg/inspector"
-	"github.com/nexg/pg-flux/pkg/obs"
-	"github.com/nexg/pg-flux/pkg/pgver"
-	"github.com/nexg/pg-flux/pkg/schema"
+	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
+	"github.com/nex-gen-tech/pg-flux/pkg/obs"
+	"github.com/nex-gen-tech/pg-flux/pkg/pgver"
+	"github.com/nex-gen-tech/pg-flux/pkg/schema"
 )
 
 // Layout selects how the dump organises output files on disk.

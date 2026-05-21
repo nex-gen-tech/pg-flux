@@ -3,10 +3,10 @@
 > **One source of truth for your Postgres schema AND your app types.**
 
 <p>
-  <a href="https://github.com/nexg/pg-flux/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/nexg/pg-flux/test.yml?branch=main&label=tests&style=flat-square" alt="tests"></a>
-  <a href="https://github.com/nexg/pg-flux/actions/workflows/matrix.yml"><img src="https://img.shields.io/github/actions/workflow/status/nexg/pg-flux/matrix.yml?branch=main&label=PG%2014-18%20matrix&style=flat-square" alt="matrix"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/github/license/nexg/pg-flux?style=flat-square" alt="MIT license"></a>
-  <a href="https://github.com/nexg/pg-flux/releases"><img src="https://img.shields.io/github/v/release/nexg/pg-flux?style=flat-square&label=release" alt="release"></a>
+  <a href="https://github.com/nex-gen-tech/pg-flux/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/nex-gen-tech/pg-flux/test.yml?branch=main&label=tests&style=flat-square" alt="tests"></a>
+  <a href="https://github.com/nex-gen-tech/pg-flux/actions/workflows/matrix.yml"><img src="https://img.shields.io/github/actions/workflow/status/nex-gen-tech/pg-flux/matrix.yml?branch=main&label=PG%2014-18%20matrix&style=flat-square" alt="matrix"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/nex-gen-tech/pg-flux?style=flat-square" alt="MIT license"></a>
+  <a href="https://github.com/nex-gen-tech/pg-flux/releases"><img src="https://img.shields.io/github/v/release/nex-gen-tech/pg-flux?style=flat-square&label=release" alt="release"></a>
   <img src="https://img.shields.io/badge/PostgreSQL-14%20%E2%80%93%2018-336791?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 14-18">
   <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.25+">
 </p>
@@ -35,7 +35,7 @@ One model. One CLI. Every catalog object pg-flux touches gets a typed representa
 
 ```bash
 # install (no Go required)
-curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | sh
+curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | sh
 
 # scaffold a project
 pg-flux init
@@ -100,19 +100,19 @@ See [ROADMAP.md](./ROADMAP.md) for what's planned and what's deliberately out of
 The fastest path — no Go required:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | sh
+curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | sh
 ```
 
-That detects your OS + arch (macOS and Linux, amd64 + arm64), downloads the right binary from the latest [GitHub Release](https://github.com/nexg/pg-flux/releases), verifies the SHA-256 checksum, and drops `pg-flux` into `/usr/local/bin` (or `~/.local/bin` if that isn't writable).
+That detects your OS + arch (macOS and Linux, amd64 + arm64), downloads the right binary from the latest [GitHub Release](https://github.com/nex-gen-tech/pg-flux/releases), verifies the SHA-256 checksum, and drops `pg-flux` into `/usr/local/bin` (or `~/.local/bin` if that isn't writable).
 
 Other paths:
 
 | Path | Command |
 |---|---|
-| **curl \| sh** | `curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh \| sh` |
-| Manual binary | Download from [GitHub Releases](https://github.com/nexg/pg-flux/releases), `tar -xzf`, move to `/usr/local/bin` |
-| Pin a version | `curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh \| PGFLUX_VERSION=v0.1.0 sh` |
-| Go install | `go install github.com/nexg/pg-flux/cmd/pg-flux@latest` (requires Go 1.25+) |
+| **curl \| sh** | `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh \| sh` |
+| Manual binary | Download from [GitHub Releases](https://github.com/nex-gen-tech/pg-flux/releases), `tar -xzf`, move to `/usr/local/bin` |
+| Pin a version | `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh \| PGFLUX_VERSION=v0.1.0 sh` |
+| Go install | `go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest` (requires Go 1.25+) |
 | Build from source | `git clone … && cd pg-flux/apps/cli && go build -o pg-flux ./cmd/pg-flux` |
 | Docker (coming soon) | `docker run --rm -v $(pwd):/app pgflux/cli:0.1 migrate apply` |
 
