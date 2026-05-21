@@ -52,3 +52,63 @@ jobs:
           name: pg-flux-linux-amd64
           path: apps/cli/pg-flux
           retention-days: 7
+
+  examples:
+    # Replay every example end-to-end against a fresh DB:
+    #   apply all migrations  →  drift (must be clean)  →  verify (must be clean).
+    # This catches drift/verify regressions on real user-shaped schemas — the
+    # test shape the matrix doesn't cover.
+    name: examples — fastapi-todo end-to-end
+    runs-on: ubuntu-latest
+    needs: unit
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pgflux
+          POSTGRES_PASSWORD: pgflux
+          POSTGRES_DB: pgflux
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U pgflux"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli/go.mod
+          cache: true
+          cache-dependency-path: apps/cli/go.sum
+
+      - name: build pg-flux
+        working-directory: apps/cli
+        run: go build -o pg-flux ./cmd/pg-flux
+
+      - name: install psql
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: replay fastapi-todo example
+        working-directory: examples/fastapi-todo
+        env:
+          BIN: ${{ github.workspace }}/apps/cli/pg-flux
+          DATABASE_URL: postgres://pgflux:pgflux@localhost:5432/pgflux_fastapi_example?sslmode=disable
+          PGPASSWORD: pgflux
+        run: |
+          set -eu
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "DROP DATABASE IF EXISTS pgflux_fastapi_example;"
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "CREATE DATABASE pgflux_fastapi_example;"
+
+          echo "--- apply migrations ---"
+          "$BIN" migrate apply
+
+          echo "--- drift (must be clean) ---"
+          "$BIN" drift
+
+          echo "--- verify (must be clean) ---"
+          "$BIN" verify
