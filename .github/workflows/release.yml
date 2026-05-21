@@ -24,9 +24,14 @@ jobs:
           - os_name: darwin
             arch: arm64
             runner: macos-14
+            # native build, no cross-compile flag needed
           - os_name: darwin
             arch: amd64
-            runner: macos-13
+            runner: macos-14
+            # cross-compile from arm64 → amd64 via Apple clang's -arch flag.
+            # macos-13 runners are scarce and being phased out, so we build
+            # the Intel Mac binary from an Apple Silicon runner instead.
+            cc_arch: x86_64
           - os_name: linux
             arch: amd64
             runner: ubuntu-latest
@@ -61,15 +66,36 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           mkdir -p ../../dist
-          BIN_NAME="pg-flux"
           OUT="../../dist/pg-flux-${{ matrix.os_name }}-${{ matrix.arch }}"
+
+          # If the matrix entry asks for an arch-specific CC, wrap clang so cgo
+          # passes "-arch <arch>" to every C compile + link invocation. Apple's
+          # clang on Apple Silicon supports both x86_64 and arm64 codegen
+          # natively, so darwin-amd64 cross-builds from a macos-14 runner.
+          if [ -n "${{ matrix.cc_arch }}" ]; then
+            CC_WRAP="$RUNNER_TEMP/cc-wrap"
+            cat > "$CC_WRAP" <<EOF
+          #!/usr/bin/env bash
+          exec clang -arch ${{ matrix.cc_arch }} "\$@"
+          EOF
+            chmod +x "$CC_WRAP"
+            export CC="$CC_WRAP"
+            echo "cross-compile: CC=$CC_WRAP (-arch ${{ matrix.cc_arch }})"
+          fi
+
           go build \
             -trimpath \
             -ldflags "-s -w -X main.Version=${{ steps.tag.outputs.tag }}" \
             -o "$OUT" \
             ./cmd/pg-flux
+
           file "$OUT" || true
-          "$OUT" version || true
+
+          # Native runs only — cross-compiled darwin-amd64 won't execute on
+          # arm64, so we can't verify with `version` here.
+          if [ -z "${{ matrix.cc_arch }}" ]; then
+            "$OUT" version || true
+          fi
 
       - name: package
         shell: bash
