@@ -130,8 +130,14 @@ func indexAnyArrayStart(lower string, from int) int {
 	}
 }
 
-// reCastSuffix strips a trailing "::typename" cast from a quoted literal, e.g.  'pending'::text  → 'pending'.
-var reCastSuffix = regexp.MustCompile(`('+[^']*'+)::[a-z][a-z0-9 ]*`)
+// reCastSuffix strips a trailing "::typename" cast from a quoted literal, e.g.
+//   'pending'::text          → 'pending'
+//   'high'::todo_priority    → 'high'
+//   'x'::public.my_enum      → 'x'
+// The type-name character class includes _ (for user-defined types like
+// todo_priority) and . (for schema-qualified types like public.my_enum), as
+// well as spaces (for multi-word built-ins like "character varying").
+var reCastSuffix = regexp.MustCompile(`('+[^']*'+)::[a-z][\w. ]*`)
 
 // reTextCast strips explicit "::text" casts added by PostgreSQL when a varchar/char column is used
 // in a constraint expression (e.g. email::text like '%@%' → email like '%@%').
@@ -336,6 +342,11 @@ func createStmtDefFingerprint(s string) string {
 	dep = strings.ToLower(strings.TrimSpace(dep))
 	dep = reMultiSpace.ReplaceAllString(dep, " ")
 	dep = stripDefaultPublicSchemaQualifiers(dep)
+	// Issue #8: pg_get_viewdef emits "CREATE VIEW ..." (never "CREATE OR REPLACE VIEW"),
+	// but users frequently write "CREATE OR REPLACE VIEW" in source SQL. The "OR REPLACE"
+	// clause is a metadata-only directive — it affects how the statement is *applied*, not
+	// the resulting view body. Strip it so the two forms fingerprint identically.
+	dep = reCreateOrReplace.ReplaceAllString(dep, "create ")
 	// Strip type casts added by pg_get_viewdef / pg_get_triggerdef to match the source
 	// SQL which typically omits them (e.g. 'archived'::post_status → 'archived'; or
 	// handle::character varying → handle for generated-column-style coercions).
@@ -376,6 +387,13 @@ var reViewColQualifier = regexp.MustCompile(`\b[a-z_][a-z0-9_]*\.([a-z_][a-z0-9_
 // the view name in a CREATE VIEW statement (case-insensitive, single-line).
 var reViewWithOptions = regexp.MustCompile(`(?i)\bwith\s*\([^)]*\)\s*`)
 
+// reCreateOrReplace matches the literal "create or replace " (case-insensitive,
+// whitespace-flexible) at the start of a CREATE statement so the body fingerprint
+// doesn't depend on whether the user wrote `CREATE` or `CREATE OR REPLACE`.
+// pg_get_viewdef / pg_get_triggerdef / pg_get_functiondef never emit `OR REPLACE`,
+// so collapsing both forms to bare `CREATE ` keeps source and catalog aligned.
+var reCreateOrReplace = regexp.MustCompile(`(?i)\bcreate\s+or\s+replace\s+`)
+
 func deparseOneStmt(sql string) (string, bool) {
 	pr, err := pgq.Parse(sql)
 	if err != nil || len(pr.GetStmts()) != 1 {
@@ -399,7 +417,13 @@ func indexDefsEqualWithRenames(di, li *schema.Index, colRenames map[string]strin
 	a := indexFingerprintNormalizers(canonIndexSQL(di.CreateSQL), di.TableSchema)
 	liSQL := applyColRenames(li.CreateSQL, colRenames)
 	b := indexFingerprintNormalizers(canonIndexSQL(liSQL), li.TableSchema)
-	return fpSQL(a) == fpSQL(b)
+	// Compare the normalised strings directly. We deliberately do NOT use
+	// pgq.Fingerprint here: it replaces every literal constant with a $n
+	// placeholder, which collapses semantically-distinct predicates like
+	// `WHERE priority IN ('high', 'urgent')` vs `WHERE priority IN ('high', 'critical')`
+	// to the same fingerprint — a silent false-negative that Issue #7's
+	// negative tests are designed to catch.
+	return a == b
 }
 
 // applyColRenames substitutes renamed column identifiers in a SQL snippet using
@@ -446,6 +470,19 @@ func indexFingerprintNormalizers(s string, tableSchema string) string {
 	if ts != "" {
 		s = strings.ReplaceAll(s, "on "+ts+".", "on ")
 	}
+	// Issue #7: pg_get_indexdef rewrites a WHERE predicate of the form
+	//   "col IN (lit, lit, ...)"
+	// to
+	//   "col = ANY (ARRAY[lit::sometype, lit::sometype, ...])"
+	// (and may also strip the ::type casts the user wrote). Source SQL keeps
+	// the IN(...) form. Collapse the catalog form back to IN-list so the two
+	// fingerprint identically. The quote-aware walker handles brackets inside
+	// string literals; type casts on individual elements are stripped.
+	//
+	// CRITICAL: this is a syntactic equivalence — `IN (a, b)` and
+	// `IN (a, b, c)` still produce different normalized forms, so adding or
+	// removing list elements is still detected as drift.
+	s = strings.ToLower(normalizeAnyArrayForFingerprint(s))
 	s = reMultiSpace.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
 }
