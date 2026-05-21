@@ -366,6 +366,15 @@ func loadFunctionMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 		    SELECT 1 FROM pg_depend d
 		    WHERE d.objid = p.oid AND d.deptype = 'e'
 		  )
+		  -- Skip functions auto-created by another object (deptype='i' = internal).
+		  -- This excludes range type constructors (CREATE TYPE ... AS RANGE auto-creates
+		  -- a constructor function plus multirange variants), which users don't declare
+		  -- and would otherwise show as "undeclared" in pg-flux verify.
+		  AND NOT EXISTS (
+		    SELECT 1 FROM pg_depend d
+		    WHERE d.classid = 'pg_proc'::regclass
+		      AND d.objid = p.oid AND d.deptype = 'i'
+		  )
 	`, schemas)
 	if err != nil {
 		return nil, fmt.Errorf("function query: %w", err)

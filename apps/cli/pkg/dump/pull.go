@@ -217,5 +217,13 @@ func subsetForPull(live *schema.SchemaState, r *VerifyReport) *schema.SchemaStat
 			}
 		}
 	}
+	if k := keep(r.Publications); len(k) > 0 {
+		out.Publications = map[string]*schema.Publication{}
+		for n := range k {
+			if v := live.Publications[n]; v != nil {
+				out.Publications[n] = v
+			}
+		}
+	}
 	return out
 }
