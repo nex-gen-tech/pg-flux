@@ -483,9 +483,41 @@ func indexFingerprintNormalizers(s string, tableSchema string) string {
 	// `IN (a, b, c)` still produce different normalized forms, so adding or
 	// removing list elements is still detected as drift.
 	s = strings.ToLower(normalizeAnyArrayForFingerprint(s))
+	// pg_get_indexdef also tags scalar string literals with their resolved
+	// type even outside ANY(ARRAY[...]) — e.g. `WHERE status = 'published'`
+	// becomes `WHERE (status = 'published'::text)`. Strip the text-family
+	// casts (text/varchar/bpchar/"char") that PG adds for type resolution;
+	// they carry no user intent. Casts to user-defined or numeric types are
+	// preserved because they DO carry meaning.
+	s = reTextFamilyCast.ReplaceAllString(s, "$1")
+	s = reQuotedCharCast.ReplaceAllString(s, "$1")
+	// pg_get_indexdef wraps the WHERE predicate in a single set of parens
+	// that the source usually omits: `WHERE (col = 'x')` ↔ `WHERE col = 'x'`.
+	// Collapse a single outer layer when the inner expression is balanced
+	// (no top-level OR/AND that would change meaning).
+	s = reWherePredicateOuterParens.ReplaceAllString(s, "where $1")
 	s = reMultiSpace.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
 }
+
+// reTextFamilyCast strips `::text` / `::varchar` / `::character varying` /
+// `::bpchar` casts that PG adds to string literals when storing index/check
+// predicates. Only these specific casts — casts to user-defined types or
+// numeric types are NOT stripped because they carry actual semantic meaning.
+var reTextFamilyCast = regexp.MustCompile(`('+[^']*'+)::(?:text|varchar|character varying|bpchar)\b`)
+
+// reQuotedCharCast handles `::"char"` separately because the trailing `"` is
+// not a word character — `\b` won't match between two non-word chars, so the
+// general regex above can't anchor cleanly on it.
+var reQuotedCharCast = regexp.MustCompile(`('+[^']*'+)::"char"`)
+
+// reWherePredicateOuterParens unwraps the outer `(...)` immediately following
+// a `WHERE ` clause when the inner content is a single balanced expression.
+// The catalog form `WHERE (expr)` collapses to `WHERE expr`. We deliberately
+// do not unwrap if the inner expression has top-level operators that would
+// change meaning under different precedence (handled by the regex requiring
+// the entire WHERE clause to be the parenthesised expression).
+var reWherePredicateOuterParens = regexp.MustCompile(`where \(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$`)
 
 // canonIndexSQL re-roundtrips through pg_query parse+deparse so desired DDL and pg_get_indexdef() agree.
 func canonIndexSQL(s string) string {
