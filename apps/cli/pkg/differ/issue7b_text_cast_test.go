@@ -66,28 +66,24 @@ func TestIndexDefsEqual_differentLiteralStillDrifts(t *testing.T) {
 }
 
 func TestIndexDefsEqual_castToUserTypePreserved(t *testing.T) {
-	// User-defined enum type cast carries meaning. If we accidentally strip
-	// it we mask legitimate drift between an int column and a typed enum.
+	// B6 fix: user-defined enum type casts on quoted literals are now stripped
+	// to eliminate false drift between source SQL (`WHERE status = 'active'`)
+	// and pg_get_indexdef output (`WHERE (status = 'active'::product_status)`).
+	// PG adds the resolved type cast automatically; it carries no user intent.
+	// Source SQL and the catalog form must fingerprint identically after stripping.
 	src := "CREATE INDEX i ON public.t (a) WHERE status = 'high'"
 	live := "CREATE INDEX i ON public.t USING btree (a) WHERE (status = 'high'::todo_priority)"
-	// The source has no cast; the live has a user-type cast. We're being strict:
-	// these reference different things (a text literal vs an enum literal), the
-	// fingerprint must NOT erase that distinction. If pg_query parse+deparse
-	// normalises both sides to the same form for this exact case, that's a
-	// separate concern — but the regex MUST NOT strip ::todo_priority.
+	if !indexEq(t, src, live) {
+		t.Fatalf("source and PG-canonical form with user-defined enum cast must compare equal (B6)")
+	}
+	// Confirm that the normalizer itself strips the cast.
 	out := indexFingerprintNormalizers(
 		"create index i on public.t using btree (a) where (status = 'high'::todo_priority)",
 		"public",
 	)
-	if !contains(out, "::todo_priority") {
-		t.Fatalf("user-defined enum cast must NOT be stripped; got: %q", out)
+	if contains(out, "::todo_priority") {
+		t.Fatalf("user-defined enum cast ::todo_priority should be stripped by normalizer (B6); got: %q", out)
 	}
-	// Compare-time behaviour: the surrounding indexDefsEqual may still match if
-	// the source happens to canonicalise the same way through pg_query. The
-	// regex-level guarantee is what we lock in here. Reference src/live for
-	// future debugging when this test ever needs revisiting.
-	_ = src
-	_ = live
 }
 
 func TestIndexDefsEqual_numericCastPreserved(t *testing.T) {
@@ -99,6 +95,72 @@ func TestIndexDefsEqual_numericCastPreserved(t *testing.T) {
 	)
 	if !contains(out, "::int") {
 		t.Fatalf("numeric ::int cast must NOT be stripped; got: %q", out)
+	}
+}
+
+// --- B6: partial-index enum cast drift ----------------------------------
+
+// TestB6_enumCastStripped verifies that a user-defined enum cast on a quoted
+// literal is stripped by the normalizer so source WHERE and catalog WHERE match.
+// Source: `WHERE status = 'active'`
+// Catalog: `WHERE (status = 'active'::product_status)`
+func TestB6_enumCastStripped(t *testing.T) {
+	out := indexFingerprintNormalizers(
+		"create index i on public.t (s) where (status = 'active'::product_status)",
+		"public",
+	)
+	if contains(out, "::product_status") {
+		t.Fatalf("'active'::product_status — enum cast should be stripped; got: %q", out)
+	}
+	if !contains(out, "'active'") {
+		t.Fatalf("literal 'active' must survive stripping; got: %q", out)
+	}
+}
+
+// TestB6_numericCastKept verifies that a numeric cast on a quoted literal is
+// NOT stripped (it carries semantic meaning: explicit string-to-int coercion).
+func TestB6_numericCastKept(t *testing.T) {
+	out := indexFingerprintNormalizers(
+		"create index i on public.t (a) where ('42'::int = a)",
+		"public",
+	)
+	if !contains(out, "::int") {
+		t.Fatalf("'42'::int — numeric cast must NOT be stripped; got: %q", out)
+	}
+}
+
+// TestB6_textCastStripped verifies that the existing text-family cast stripping
+// still works after the B6 change (regression guard).
+func TestB6_textCastStripped(t *testing.T) {
+	out := indexFingerprintNormalizers(
+		"create index i on public.t (a) where (status = 'active'::text)",
+		"public",
+	)
+	if contains(out, "::text") {
+		t.Fatalf("'active'::text — text cast should be stripped; got: %q", out)
+	}
+}
+
+// TestB6_domainCastStripped verifies that a user-defined domain cast is also
+// stripped (domains are structurally the same as enums from the cast perspective).
+func TestB6_domainCastStripped(t *testing.T) {
+	out := indexFingerprintNormalizers(
+		"create index i on public.t (a) where (code = 'hello'::my_custom_domain)",
+		"public",
+	)
+	if contains(out, "::my_custom_domain") {
+		t.Fatalf("'hello'::my_custom_domain — domain cast should be stripped; got: %q", out)
+	}
+}
+
+// TestB6_differentLiteralsStillDrift verifies that two different literal values
+// still register as drift after normalisation (the strip must not collapse
+// semantically-distinct predicates).
+func TestB6_differentLiteralsStillDrift(t *testing.T) {
+	src := "CREATE INDEX i ON public.t (s) WHERE status = 'active'"
+	live := "CREATE INDEX i ON public.t USING btree (s) WHERE (status = 'archived'::product_status)"
+	if indexEq(t, src, live) {
+		t.Fatalf("CRITICAL: 'active' vs 'archived' must still register as drift after enum cast strip")
 	}
 }
 

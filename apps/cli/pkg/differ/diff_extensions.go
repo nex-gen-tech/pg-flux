@@ -160,6 +160,25 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 				}
 			}
 		}
+		// Skip CREATE SCHEMA [IF NOT EXISTS] when the schema already exists in the live DB.
+		// CREATE SCHEMA IF NOT EXISTS is a no-op when the schema exists, but emitting it
+		// every migrate generate is confusing. Suppress it when live.Schemas confirms the
+		// schema is already present (Bug B3).
+		if reCreateSchema.MatchString(s) {
+			if live != nil && len(live.Schemas) > 0 {
+				if m := reCreateSchema.FindStringSubmatch(s); len(m) == 3 {
+					schemaName := strings.ToLower(strings.TrimSpace(m[2]))
+					// Strip any trailing options like AUTHORIZATION role
+					// The schema name is the first word in group 2.
+					if idx := strings.IndexAny(schemaName, " \t\n"); idx > 0 {
+						schemaName = schemaName[:idx]
+					}
+					if live.Schemas[schemaName] {
+						continue // schema already exists, suppress the no-op
+					}
+				}
+			}
+		}
 		idempotent := makeExtraDDLIdempotent(s)
 		// Give CREATE TYPE / CREATE DOMAIN the correct op-score so they sort
 		// before CREATE TABLE and ALTER COLUMN statements that reference the type.

@@ -95,7 +95,17 @@ func processExtraNode(raw *pgq.RawStmt, st *schema.SchemaState, opt LoadOptions)
 			return err
 		}
 		return captureDeparsedExtraDDL(raw, st)
-	case *pgq.Node_DefineStmt, *pgq.Node_CreateSchemaStmt, *pgq.Node_AlterTypeStmt:
+	case *pgq.Node_CreateSchemaStmt:
+		// Capture the schema name so the differ can suppress CREATE SCHEMA IF NOT EXISTS
+		// when the schema already exists in the live DB (Bug B3).
+		if n.CreateSchemaStmt.GetSchemaname() != "" {
+			if st.Schemas == nil {
+				st.Schemas = make(map[string]bool)
+			}
+			st.Schemas[strings.ToLower(n.CreateSchemaStmt.GetSchemaname())] = true
+		}
+		return captureDeparsedExtraDDL(raw, st)
+	case *pgq.Node_DefineStmt, *pgq.Node_AlterTypeStmt:
 		return captureDeparsedExtraDDL(raw, st)
 	// GRANT / REVOKE: capture structured privilege entries onto the target objects
 	// so the differ can compute set-diffs and emit minimal DDL. Object kinds we

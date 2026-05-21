@@ -485,12 +485,14 @@ func indexFingerprintNormalizers(s string, tableSchema string) string {
 	s = strings.ToLower(normalizeAnyArrayForFingerprint(s))
 	// pg_get_indexdef also tags scalar string literals with their resolved
 	// type even outside ANY(ARRAY[...]) — e.g. `WHERE status = 'published'`
-	// becomes `WHERE (status = 'published'::text)`. Strip the text-family
-	// casts (text/varchar/bpchar/"char") that PG adds for type resolution;
-	// they carry no user intent. Casts to user-defined or numeric types are
-	// preserved because they DO carry meaning.
+	// becomes `WHERE (status = 'published'::text)`. Strip text-family casts
+	// (text/varchar/bpchar/"char") and user-defined type casts (enums, domains,
+	// composite types like ::product_status, ::order_status) that PG adds for
+	// type resolution. Numeric and binary casts are preserved because they carry
+	// actual semantic meaning (the user explicitly coerced a string literal).
 	s = reTextFamilyCast.ReplaceAllString(s, "$1")
 	s = reQuotedCharCast.ReplaceAllString(s, "$1")
+	s = stripUserDefinedCasts(s)
 	// pg_get_indexdef wraps the WHERE predicate in a single set of parens
 	// that the source usually omits: `WHERE (col = 'x')` ↔ `WHERE col = 'x'`.
 	// Collapse a single outer layer when the inner expression is balanced
@@ -510,6 +512,52 @@ var reTextFamilyCast = regexp.MustCompile(`('+[^']*'+)::(?:text|varchar|characte
 // not a word character — `\b` won't match between two non-word chars, so the
 // general regex above can't anchor cleanly on it.
 var reQuotedCharCast = regexp.MustCompile(`('+[^']*'+)::"char"`)
+
+// reUserDefinedCast matches a `::type_name` cast suffix on a quoted literal
+// where type_name is a bare or schema-qualified identifier (e.g. ::product_status,
+// ::public.order_status). It is used together with keepNumericCast to strip only
+// user-defined type casts (enums, domains, composite types) while preserving
+// load-bearing numeric/binary casts.
+var reUserDefinedCast = regexp.MustCompile(`('+[^']*'+)::([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)`)
+
+// numericBinaryTypes is the set of built-in type names whose casts on quoted
+// literals are semantically meaningful (the user explicitly coerces a string
+// literal to a numeric or binary type). Casts to these types are NOT stripped
+// by stripUserDefinedCasts.
+var numericBinaryTypes = map[string]bool{
+	"int": true, "int2": true, "int4": true, "int8": true,
+	"integer": true, "bigint": true, "smallint": true,
+	"numeric": true, "decimal": true,
+	"float4": true, "float8": true, "real": true, "double": true,
+	"bool": true, "boolean": true,
+	"bytea": true,
+	// text-family already handled by reTextFamilyCast / reQuotedCharCast
+	"text": true, "varchar": true, "char": true, "bpchar": true,
+}
+
+// stripUserDefinedCasts removes `::type_name` suffixes from quoted literals
+// when type_name is a user-defined type (enum, domain, composite type).
+// Numeric and binary type casts are preserved because they carry actual
+// semantic meaning (explicit coercion of a string literal to a numeric type).
+// Text-family casts are already handled by reTextFamilyCast.
+func stripUserDefinedCasts(s string) string {
+	return reUserDefinedCast.ReplaceAllStringFunc(s, func(m string) string {
+		parts := reUserDefinedCast.FindStringSubmatch(m)
+		if len(parts) < 3 {
+			return m
+		}
+		typeName := parts[2]
+		// Strip schema qualifier for the keep-list lookup (e.g. "pg_catalog.int4" → "int4").
+		bare := typeName
+		if dot := strings.LastIndexByte(typeName, '.'); dot >= 0 {
+			bare = typeName[dot+1:]
+		}
+		if numericBinaryTypes[bare] {
+			return m // preserve numeric/binary casts
+		}
+		return parts[1] // strip ::user_defined_type
+	})
+}
 
 // reWherePredicateOuterParens unwraps the outer `(...)` immediately following
 // a `WHERE ` clause when the inner content is a single balanced expression.
@@ -631,6 +679,14 @@ func fpFunctionSQL(s string) string {
 	// Strip "security invoker" — it's the default; pg_get_functiondef omits it,
 	// so explicit source mentions cause spurious diffs.
 	header = reSecurityInvoker.ReplaceAllLiteralString(header, " ")
+	// Strip explicit "IN" parameter mode from the parameter list.
+	// pg_get_functiondef always emits "IN param_name type" for IN parameters, but
+	// source SQL typically omits the mode (IN is the default). After the deparse
+	// round-trip both forms still differ on the "in " prefix, causing procedures to
+	// re-emit every migrate generate even when nothing has changed (Bug B2).
+	// We strip "\bin " only from the header (before AS $$) so we don't touch body text.
+	// Capture group $1 preserves the first char of the following word.
+	header = reParamModeIn.ReplaceAllString(header, "$1")
 	// Normalize SET clause: "set k = v" / "set k to v" / "set k = 'v'" → "set k to v"
 	header = reSetClauseOp.ReplaceAllString(header, "set $1 to ")
 	header = reSetClauseQuoted.ReplaceAllString(header, "set $1 to $2")
@@ -657,6 +713,12 @@ var (
 	// the LANGUAGE clause and the AS $$ delimiter so they can be reordered into
 	// a stable canonical sequence.
 	reFunctionOptionClauses = regexp.MustCompile(`(language\s+\w+)\s+(.*?)\s+as\s*$`)
+	// reParamModeIn matches the explicit IN parameter mode in a function/procedure
+	// parameter list. pg_get_functiondef emits "IN param_name type" but source SQL
+	// omits it (IN is the default). Strip it so both forms fingerprint identically.
+	// Only matches "in " followed by a word character to avoid stripping "in" from
+	// identifiers or other contexts (e.g. "interface" is safe due to word boundary).
+	reParamModeIn = regexp.MustCompile(`\bin (\w)`)
 )
 
 // sortFunctionOptions canonicalises the cluster of optional clauses appearing

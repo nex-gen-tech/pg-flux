@@ -48,6 +48,12 @@ type SchemaState struct {
 	// Populated by the inspector so diffExtraDDL can skip CREATE TABLE IF NOT EXISTS
 	// for partition children that already exist.
 	PartitionChildren map[string]bool
+	// Schemas is the set of schema names that exist in the database.
+	// Populated by the inspector from pg_catalog.pg_namespace (live state) and by
+	// the source loader from CREATE SCHEMA statements (desired state). Used by
+	// diffExtraDDL to suppress CREATE SCHEMA IF NOT EXISTS when the schema already
+	// exists in the live DB (Bug B3: schema re-emitted on every migrate generate).
+	Schemas map[string]bool
 	// Domains holds user-defined domain definitions keyed by "schema.name".
 	// Populated by the inspector from the live DB; used by the differ to detect
 	// constraint changes and emit ALTER DOMAIN DDL.
@@ -278,6 +284,12 @@ func (s *SchemaState) Clone() *SchemaState {
 		out.PartitionChildren = make(map[string]bool, len(s.PartitionChildren))
 		for k, v := range s.PartitionChildren {
 			out.PartitionChildren[k] = v
+		}
+	}
+	if len(s.Schemas) > 0 {
+		out.Schemas = make(map[string]bool, len(s.Schemas))
+		for k, v := range s.Schemas {
+			out.Schemas[k] = v
 		}
 	}
 	if len(s.Domains) > 0 {

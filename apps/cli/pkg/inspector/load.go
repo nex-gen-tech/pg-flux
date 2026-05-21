@@ -174,6 +174,13 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 		return nil, err
 	}
 	st.PartitionChildren = pc
+	// Load schema names so diffExtraDDL can suppress CREATE SCHEMA IF NOT EXISTS
+	// for schemas that already exist in the live DB.
+	sm, err := loadSchemasMap(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	st.Schemas = sm
 	// Annotate every loaded object with its pg_description comment if any.
 	if err := loadComments(ctx, pool, st, schemas); err != nil {
 		return nil, err
@@ -211,6 +218,30 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 		return nil, err
 	}
 	return st, nil
+}
+
+// loadSchemasMap returns the set of all non-system schema names present in the live DB.
+// Used by diffExtraDDL to suppress CREATE SCHEMA IF NOT EXISTS for schemas that already exist.
+func loadSchemasMap(ctx context.Context, pool *pgxpool.Pool) (map[string]bool, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT nspname
+		FROM pg_catalog.pg_namespace
+		WHERE nspname NOT LIKE 'pg_%'
+		  AND nspname != 'information_schema'
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query schemas: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var nspname string
+		if err := rows.Scan(&nspname); err != nil {
+			return nil, err
+		}
+		out[strings.ToLower(nspname)] = true
+	}
+	return out, rows.Err()
 }
 
 func loadTablesMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (map[string]*schema.Table, error) {
