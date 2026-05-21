@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 
 	"github.com/nex-gen-tech/pg-flux/pkg/codegen"
@@ -99,19 +100,25 @@ func main() {
 }
 
 func newRoot() *cobra.Command {
-	r := &cobra.Command{Use: "pg-flux", Short: "Declarative PostgreSQL schema migration"}
+	r := &cobra.Command{
+		Use:          "pg-flux",
+		Short:        "Declarative PostgreSQL schema migration",
+		SilenceUsage: true, // don't dump the flags block on every error; cobra still prints usage on unknown commands
+	}
 	r.PersistentFlags().StringVar(&globalFormat, "format", "human", "human or json")
 	r.PersistentFlags().StringVar(&dbURL, "db", os.Getenv("DATABASE_URL"), "database URL")
-	r.PersistentFlags().StringVar(&schemaPath, "schema", "./schema", "schema directory (see also --schema-dir)")
-	r.PersistentFlags().StringVar(&schemaPath, "schema-dir", "./schema", "schema directory (PRD: same as --schema)")
+	r.PersistentFlags().StringVar(&schemaPath, "schema-dir", "./schema", "directory containing schema .sql files")
+	// --schema is a hidden alias for --schema-dir kept for backwards compatibility.
+	r.PersistentFlags().StringVar(&schemaPath, "schema", "./schema", "alias for --schema-dir")
+	_ = r.PersistentFlags().MarkHidden("schema")
 	r.PersistentFlags().StringVar(&schemaFile, "schema-file", "", "single .sql file")
 	r.PersistentFlags().StringVar(&allowHaz, "allow-hazards", "", "allowed hazards, comma-separated")
 	r.PersistentFlags().StringVar(&schemasFlag, "schemas", "public", "database schemas (comma list)")
 	r.PersistentFlags().BoolVar(&validatePlpgsqlF, "validate-plpgsql", false, "parse-check LANGUAGE plpgsql functions with pg_query (stricter load)")
-	r.PersistentFlags().BoolVar(&validateSQLF, "validate-sql", false, "re-parse each top-level statement (pg_query FR-01 check)")
+	r.PersistentFlags().BoolVar(&validateSQLF, "validate-sql", false, "re-parse each top-level statement with pg_query for an extra safety check")
 	r.PersistentFlags().BoolVar(&appendValidateF, "append-validate-not-valid", false, "emit synthetic VALIDATE CONSTRAINT after ADD ... NOT VALID (user-written)")
-	r.PersistentFlags().BoolVar(&autoNotValidF, "auto-not-valid", true, "auto-rewrite ADD CONSTRAINT CHECK/FK to NOT VALID + VALIDATE (PRD P3-14; default on)")
-	r.PersistentFlags().Float64Var(&reltupleThresh, "set-not-null-reltuple-hint", 10000, "rows above which SET NOT NULL is rewritten to the 4-step safe pattern (PRD P3-15; 0 disables)")
+	r.PersistentFlags().BoolVar(&autoNotValidF, "auto-not-valid", true, "auto-rewrite ADD CONSTRAINT CHECK/FK to NOT VALID + VALIDATE (default on)")
+	r.PersistentFlags().Float64Var(&reltupleThresh, "set-not-null-reltuple-hint", 10000, "rows above which SET NOT NULL is rewritten to the 4-step safe pattern (0 disables)")
 	r.PersistentFlags().BoolVar(&allowMassDrop, "allow-mass-drop", false, "permit migrations that drop >25% of live tables/views/sequences (guards against an empty --schema wiping a non-empty DB)")
 	r.PersistentFlags().Float64Var(&massDropThreshold, "mass-drop-threshold", 25, "percentage of live objects above which mass-drop guard trips; ignored with --allow-mass-drop")
 	r.PersistentFlags().StringVar(&logFormat, "log-format", "text", "structured log output format: text (default, human-readable) or json (one event per line, machine-parseable)")
@@ -150,7 +157,21 @@ func newRoot() *cobra.Command {
 		return nil
 	}
 	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdDump(), cmdVerify(), cmdPull(), cmdGen(), cmdVersion())
+	silenceUsageRecursively(r)
 	return r
+}
+
+// silenceUsageRecursively sets SilenceUsage=true on the command and every descendant.
+// Cobra does not inherit this from the parent automatically when subcommands are
+// constructed by helper funcs, so we walk the tree explicitly. The effect: a RunE
+// returning an error prints only the error message, not the full --help block.
+// Unknown-command / bad-flag errors still print usage (cobra handles those before
+// RunE).
+func silenceUsageRecursively(c *cobra.Command) {
+	c.SilenceUsage = true
+	for _, sub := range c.Commands() {
+		silenceUsageRecursively(sub)
+	}
 }
 
 func parseSchemas() []string {
@@ -216,19 +237,28 @@ func cmdInit() *cobra.Command {
 			}
 
 			if withEx {
-				ex := "-- Example table. Rename or replace with your own schema.\n" +
-					"CREATE TABLE public.users (\n" +
-					"  id         bigserial   PRIMARY KEY,\n" +
-					"  email      text        NOT NULL,\n" +
-					"  username   text        NOT NULL,\n" +
-					"  created_at timestamptz NOT NULL DEFAULT now(),\n\n" +
-					"  CONSTRAINT users_email_unique    UNIQUE (email),\n" +
-					"  CONSTRAINT users_username_unique UNIQUE (username),\n" +
-					"  CONSTRAINT users_email_format    CHECK  (email LIKE '%@%')\n" +
-					");\n\n" +
-					"CREATE INDEX idx_users_email   ON public.users (email);\n" +
-					"CREATE INDEX idx_users_created ON public.users (created_at DESC);\n"
-				_ = os.WriteFile(dir+"/users.sql", []byte(ex), 0o644)
+				// Don't drop an example into a schema dir the user already populated —
+				// it would either be confusing (mystery file) or get silently overwritten
+				// later (the README shows `cat > schema/users.sql` as the next step).
+				// Skip when anything other than the directory itself is already present.
+				if dirHasContent(dir) {
+					fmt.Fprintf(cmd.OutOrStdout(),
+						"Skipping example file: %s already contains files.\n", dir)
+				} else {
+					ex := "-- Example table. Rename or replace with your own schema.\n" +
+						"CREATE TABLE public.users (\n" +
+						"  id         bigserial   PRIMARY KEY,\n" +
+						"  email      text        NOT NULL,\n" +
+						"  username   text        NOT NULL,\n" +
+						"  created_at timestamptz NOT NULL DEFAULT now(),\n\n" +
+						"  CONSTRAINT users_email_unique    UNIQUE (email),\n" +
+						"  CONSTRAINT users_username_unique UNIQUE (username),\n" +
+						"  CONSTRAINT users_email_format    CHECK  (email LIKE '%@%')\n" +
+						");\n\n" +
+						"CREATE INDEX idx_users_email   ON public.users (email);\n" +
+						"CREATE INDEX idx_users_created ON public.users (created_at DESC);\n"
+					_ = os.WriteFile(dir+"/users.sql", []byte(ex), 0o644)
+				}
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(),
@@ -244,13 +274,25 @@ func cmdInit() *cobra.Command {
 	return c
 }
 
-// isTerminal returns true when f is a real TTY.
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
+// dirHasContent reports whether dir exists and contains at least one entry.
+// Returns false for non-existent dirs, errors reading the dir, or empty dirs.
+func dirHasContent(dir string) bool {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
 	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return len(entries) > 0
+}
+
+// isTerminal returns true when f is a real TTY AND PGFLUX_NON_INTERACTIVE is unset.
+// Setting PGFLUX_NON_INTERACTIVE=1 forces non-interactive mode (skip all prompts,
+// silently accept defaults) — handy for CI when stdin happens to be a TTY but
+// scripted behavior is wanted.
+func isTerminal(f *os.File) bool {
+	if os.Getenv("PGFLUX_NON_INTERACTIVE") != "" {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
 }
 
 func cmdMigrate() *cobra.Command {

@@ -3,12 +3,15 @@ module github.com/nex-gen-tech/pg-flux
 go 1.25.0
 
 require (
+	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pganalyze/pg_query_go/v6 v6.2.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	golang.org/x/sync v0.20.0
+	golang.org/x/term v0.40.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -28,7 +31,6 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/fergusstrange/embedded-postgres v1.34.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
@@ -71,5 +73,4 @@ require (
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
