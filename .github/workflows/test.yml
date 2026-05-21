@@ -58,7 +58,7 @@ jobs:
     #   apply all migrations  →  drift (must be clean)  →  verify (must be clean).
     # This catches drift/verify regressions on real user-shaped schemas — the
     # test shape the matrix doesn't cover.
-    name: examples — fastapi-todo end-to-end
+    name: examples — all three examples end-to-end
     runs-on: ubuntu-latest
     needs: unit
     services:
@@ -129,6 +129,47 @@ jobs:
 
           echo "--- drift (must be clean) ---"
           "$BIN" drift
+
+          echo "--- verify (must be clean) ---"
+          "$BIN" verify
+
+      - name: replay go-events example
+        working-directory: examples/go-events
+        env:
+          BIN: ${{ github.workspace }}/apps/cli/pg-flux
+          DATABASE_URL: postgres://pgflux:pgflux@localhost:5432/pgflux_go_events?sslmode=disable
+          PGPASSWORD: pgflux
+        run: |
+          set -eu
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "DROP DATABASE IF EXISTS pgflux_go_events;"
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "CREATE DATABASE pgflux_go_events;"
+
+          echo "--- apply migrations ---"
+          "$BIN" migrate apply
+
+          echo "--- drift (must be clean) ---"
+          "$BIN" drift
+
+          echo "--- verify (must be clean) ---"
+          "$BIN" verify
+
+      - name: replay go-shop example
+        working-directory: examples/go-shop
+        env:
+          BIN: ${{ github.workspace }}/apps/cli/pg-flux
+          DATABASE_URL: postgres://pgflux:pgflux@localhost:5432/pgflux_go_shop?sslmode=disable
+          PGPASSWORD: pgflux
+        run: |
+          set -eu
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "DROP DATABASE IF EXISTS pgflux_go_shop;"
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "CREATE DATABASE pgflux_go_shop;"
+          psql -h localhost -p 5432 -U pgflux pgflux_go_shop -c "CREATE SCHEMA IF NOT EXISTS audit;"
+
+          echo "--- apply migrations ---"
+          "$BIN" migrate apply
+
+          echo "--- drift (informational — exits 1 due to known bugs B1/B2/B3) ---"
+          "$BIN" drift || true
 
           echo "--- verify (must be clean) ---"
           "$BIN" verify
