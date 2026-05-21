@@ -257,9 +257,6 @@ func cmdInit() *cobra.Command {
 			}
 
 			cfgPath := ".pg-flux.yml"
-			if _, err := os.Stat(cfgPath); err == nil {
-				return fmt.Errorf("refusing to overwrite %s", cfgPath)
-			}
 			cfgContent := fmt.Sprintf(
 				"version: 1\nschema_dir: %s\nmigrations_dir: %s\ntarget_schemas: [ public ]\n",
 				dir, migrDir)
@@ -268,27 +265,38 @@ func cmdInit() *cobra.Command {
 			}
 
 			if withEx {
-				// Don't drop an example into a schema dir the user already populated —
-				// it would either be confusing (mystery file) or get silently overwritten
-				// later (the README shows `cat > schema/users.sql` as the next step).
-				// Skip when anything other than the directory itself is already present.
-				if dirHasContent(dir) {
+				ex := "-- Example table. Rename or replace with your own schema.\n" +
+					"CREATE TABLE public.users (\n" +
+					"  id         bigserial   PRIMARY KEY,\n" +
+					"  email      text        NOT NULL,\n" +
+					"  username   text        NOT NULL,\n" +
+					"  created_at timestamptz NOT NULL DEFAULT now(),\n\n" +
+					"  CONSTRAINT users_email_unique    UNIQUE (email),\n" +
+					"  CONSTRAINT users_username_unique UNIQUE (username),\n" +
+					"  CONSTRAINT users_email_format    CHECK  (email LIKE '%@%')\n" +
+					");\n\n" +
+					"CREATE INDEX idx_users_email   ON public.users (email);\n" +
+					"CREATE INDEX idx_users_created ON public.users (created_at DESC);\n"
+
+				// Sample files to write: target path -> content.
+				sampleFiles := map[string]string{
+					filepath.Join(dir, "users.sql"): ex,
+				}
+
+				allSkipped := true
+				for target, content := range sampleFiles {
+					rel, _ := filepath.Rel(".", target)
+					if _, err := os.Stat(target); err == nil {
+						// File already exists — skip silently with a note.
+						fmt.Fprintf(cmd.OutOrStdout(), "skipped %s (already exists)\n", rel)
+						continue
+					}
+					allSkipped = false
+					_ = os.WriteFile(target, []byte(content), 0o644)
+				}
+				if allSkipped {
 					fmt.Fprintf(cmd.OutOrStdout(),
-						"Skipping example file: %s already contains files.\n", dir)
-				} else {
-					ex := "-- Example table. Rename or replace with your own schema.\n" +
-						"CREATE TABLE public.users (\n" +
-						"  id         bigserial   PRIMARY KEY,\n" +
-						"  email      text        NOT NULL,\n" +
-						"  username   text        NOT NULL,\n" +
-						"  created_at timestamptz NOT NULL DEFAULT now(),\n\n" +
-						"  CONSTRAINT users_email_unique    UNIQUE (email),\n" +
-						"  CONSTRAINT users_username_unique UNIQUE (username),\n" +
-						"  CONSTRAINT users_email_format    CHECK  (email LIKE '%@%')\n" +
-						");\n\n" +
-						"CREATE INDEX idx_users_email   ON public.users (email);\n" +
-						"CREATE INDEX idx_users_created ON public.users (created_at DESC);\n"
-					_ = os.WriteFile(dir+"/users.sql", []byte(ex), 0o644)
+						"schema dir already has files — skipped sample schema. Edit schema/*.sql and run pg-flux migrate generate.\n")
 				}
 			}
 
@@ -331,7 +339,7 @@ func cmdMigrate() *cobra.Command {
 		Use:   "migrate",
 		Short: "Manage timestamped migration files",
 	}
-	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus(), cmdMigrateRepair(), cmdMigrateBaseline())
+	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus(), cmdMigrateRepair(), cmdMigrateBaseline(), cmdMigrateRehash())
 	return m
 }
 
@@ -715,8 +723,14 @@ func makeGenerator(o codegen.OutputConfig) (codegen.Generator, error) {
 			g.NameOverrides = o.NameOverrides
 		}
 		return g, nil
+	case codegen.LangPython:
+		g := codegen.NewPythonGenerator()
+		if len(o.NameOverrides) > 0 {
+			g.NameOverrides = o.NameOverrides
+		}
+		return g, nil
 	}
-	return nil, fmt.Errorf("unsupported language %q (supported: go, ts)", o.Lang)
+	return nil, fmt.Errorf("unsupported language %q (supported: go, ts, python)", o.Lang)
 }
 
 func makeTypeMap(o codegen.OutputConfig) codegen.TypeMap {
@@ -725,6 +739,8 @@ func makeTypeMap(o codegen.OutputConfig) codegen.TypeMap {
 		return &codegen.GoTypeMap{Overrides: o.TypeOverrides}
 	case codegen.LangTypeScript, "typescript":
 		return &codegen.TSTypeMap{Overrides: o.TypeOverrides}
+	case codegen.LangPython:
+		return &codegen.PythonTypeMap{Overrides: o.TypeOverrides}
 	}
 	return nil
 }
@@ -1179,4 +1195,36 @@ func diffSummary(p *plan.ExecutionPlan) []render.Difference {
 		o = append(o, render.Difference{ObjectType: s.OpType, ObjectName: s.Object, ChangeType: s.OpType, Details: s.DDL})
 	}
 	return o
+}
+
+func cmdMigrateRehash() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rehash <migration-file>",
+		Short: "Update the baseline hash in a manually-edited migration file",
+		Long: `Rehash reads the specified migration file, recomputes a SHA-256 of its
+content (excluding the existing baseline-hash line), and updates the
+"-- pg-flux-baseline-hash: ..." line with the new value.
+
+Use this after manually editing a generated migration file (e.g. to remove a
+broken statement). Subsequent "migrate apply" runs will recognise the updated
+hash as a user-accepted edit and skip the live-DB drift check for that file.
+
+If the file has no baseline-hash line, rehash prints a warning and exits
+without modifying the file.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			filePath := args[0]
+			res, err := migrate.Rehash(filePath)
+			if err != nil {
+				return err
+			}
+			if !res.HadHashLine {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"warning: %s has no baseline-hash line — nothing to rehash\n", filePath)
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "rehashed %s\n", filePath)
+			return nil
+		},
+	}
 }

@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/nex-gen-tech/pg-flux/pkg/differ"
 	"github.com/nex-gen-tech/pg-flux/pkg/hashstate"
+	"github.com/nex-gen-tech/pg-flux/pkg/hazard"
 	"github.com/nex-gen-tech/pg-flux/pkg/inspector"
 	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 	"github.com/nex-gen-tech/pg-flux/pkg/schema"
@@ -77,6 +79,14 @@ func Generate(
 
 	if len(diffResult.Plan.Statements) == 0 {
 		return &GenerateResult{}, nil
+	}
+
+	// Suppress COLUMN_REORDER advisories that were already emitted in the most
+	// recent prior migration for the same table/order (avoid repeating noise on
+	// every subsequent migration until the table is recreated).
+	prevReorderAdvisories := prevColumnReorderAdvisories(opts.MigrationsDir)
+	if len(prevReorderAdvisories) > 0 {
+		suppressColumnReorderAdvisories(diffResult.Plan, prevReorderAdvisories)
 	}
 
 	// Advisory-only plans (no actual DDL to execute) should not generate a file.
@@ -190,4 +200,68 @@ func buildMigrationSQL(p *plan.ExecutionPlan, baselineHash string) string {
 	}
 
 	return b.String()
+}
+
+// columnReorderPrefix is the comment prefix written for COLUMN_REORDER advisories.
+const columnReorderPrefix = "-- [ADVISORY COLUMN_REORDER] "
+
+// prevColumnReorderAdvisories reads the most recent migration file in dir and
+// returns the set of COLUMN_REORDER advisory messages it contains. The returned
+// map keys are the verbatim message text (after the prefix). Returns nil when
+// there are no prior migrations or any read error occurs (fail-open: we prefer
+// to emit a duplicate advisory over silently losing a new one).
+func prevColumnReorderAdvisories(dir string) map[string]bool {
+	files, err := migrationFiles(dir)
+	if err != nil || len(files) == 0 {
+		return nil
+	}
+	// Most recent file is the last in the sorted slice.
+	lastFile := files[len(files)-1]
+	f, err := os.Open(lastFile)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	seen := make(map[string]bool)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if msg, ok := strings.CutPrefix(line, columnReorderPrefix); ok {
+			seen[msg] = true
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	return seen
+}
+
+// suppressColumnReorderAdvisories removes COLUMN_REORDER hazards from advisory
+// statements in the plan when the identical message was already present in the
+// previous migration (prevSeen). Statements that become hazard-free are removed
+// from the plan entirely; other hazards on the same statement are preserved.
+func suppressColumnReorderAdvisories(p *plan.ExecutionPlan, prevSeen map[string]bool) {
+	filtered := p.Statements[:0]
+	for _, s := range p.Statements {
+		if s.DDL != "" {
+			// Real DDL: keep as-is (blocking hazards live here, not COLUMN_REORDER).
+			filtered = append(filtered, s)
+			continue
+		}
+		// Advisory-only statement: filter out suppressed COLUMN_REORDER hazards.
+		remaining := s.Hazards[:0]
+		for _, h := range s.Hazards {
+			if h.Type == hazard.ColumnReorder && h.Severity == hazard.SeverityAdvisory && prevSeen[h.Message] {
+				continue // suppress: identical advisory already in previous migration
+			}
+			remaining = append(remaining, h)
+		}
+		s.Hazards = remaining
+		// Drop the statement entirely if it had no other hazards.
+		if len(s.Hazards) > 0 {
+			filtered = append(filtered, s)
+		}
+	}
+	p.Statements = filtered
 }

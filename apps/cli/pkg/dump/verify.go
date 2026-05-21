@@ -157,9 +157,27 @@ func Verify(desired, live *schema.SchemaState) *VerifyReport {
 			r.Policies = append(r.Policies, k)
 		}
 	}
-	for k := range live.EnumValues {
-		if _, ok := desired.EnumValues[k]; !ok {
-			r.Enums = append(r.Enums, k)
+	// Prefer the structured Enums map; fall back to EnumValues for callers that
+	// have not yet been updated to populate Enums.
+	if len(live.Enums) > 0 {
+		for k, v := range live.Enums {
+			if v == nil {
+				continue
+			}
+			if _, ok := desired.Enums[k]; !ok {
+				// Also accept a match via the legacy EnumValues key so incremental
+				// rollouts (inspector updated, source loader not yet) stay clean.
+				if _, okLegacy := desired.EnumValues[k]; !okLegacy {
+					r.Enums = append(r.Enums, k)
+				}
+			}
+		}
+	} else {
+		// Legacy path: live was inspected without the Enums field.
+		for k := range live.EnumValues {
+			if _, ok := desired.EnumValues[k]; !ok {
+				r.Enums = append(r.Enums, k)
+			}
 		}
 	}
 	for k, v := range live.Domains {

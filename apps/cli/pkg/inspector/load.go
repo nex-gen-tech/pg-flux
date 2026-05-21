@@ -155,6 +155,13 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, opt Options) (*schema.Sche
 	}
 	st.UserTypes = utm
 	st.EnumValues = enumVals
+	// Structured enum map — used by the differ for drift detection and
+	// by verify for undeclared-object checks.
+	enumMap, err := loadEnumsMap(ctx, pool, schemas)
+	if err != nil {
+		return nil, err
+	}
+	st.Enums = enumMap
 	// Load domain definitions with CHECK constraints for ALTER DOMAIN diffing.
 	dm, err := loadDomainMap(ctx, pool, schemas)
 	if err != nil {

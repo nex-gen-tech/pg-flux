@@ -187,6 +187,7 @@ func Diff(desired, live *schema.SchemaState, opt Options) (*DiffResult, error) {
 	changes = append(changes, diffTriggers(desired, live)...)
 	changes = append(changes, diffExtensions(desired, live)...)
 	changes = append(changes, diffDomains(desired, live)...)
+	changes = append(changes, diffEnums(desired, live)...)
 	changes = append(changes, diffExtraDDL(desired, live)...)
 	changes = append(changes, diffMiscObjects(desired)...)
 	changes = append(changes, diffComments(desired, live)...)

@@ -164,6 +164,15 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 		// Give CREATE TYPE / CREATE DOMAIN the correct op-score so they sort
 		// before CREATE TABLE and ALTER COLUMN statements that reference the type.
 		if reCreateType.MatchString(s) || reCreateDomain.MatchString(s) {
+			// When the desired state carries structured enum data (d.Enums populated by
+			// the source loader), delegate all enum CREATE/ALTER/DROP to diffEnums so we
+			// don't double-emit. diffEnums is called earlier in Diff() and owns the full
+			// lifecycle for structurally-modelled enum types.
+			if em := reCreateEnum.FindStringSubmatch(s); len(em) == 3 && len(d.Enums) > 0 {
+				// Skip: diffEnums already handles this enum type.
+				continue
+			}
+
 			// Check if the type already exists in the live DB.
 			typeExists := false
 			if live != nil && len(live.UserTypes) > 0 {
@@ -176,6 +185,7 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 					if _, exists := live.UserTypes[key]; exists {
 						typeExists = true
 						// For enums: diff values and emit ADD VALUE for new labels.
+						// This path is the legacy fallback when d.Enums is not populated.
 						if em := reCreateEnum.FindStringSubmatch(s); len(em) == 3 {
 							desiredVals := parseEnumValues(em[2])
 							liveVals := live.EnumValues[key]

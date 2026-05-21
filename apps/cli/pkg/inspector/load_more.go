@@ -71,6 +71,39 @@ func loadUserTypeMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) 
 	return typeSet, enumVals, nil
 }
 
+// loadEnumsMap queries pg_type + pg_enum to return a map of EnumType records
+// keyed by "schema.name" for all enum types visible in the given schemas.
+// This is the primary data source for structured enum drift detection.
+func loadEnumsMap(ctx context.Context, pool *pgxpool.Pool, schemas []string) (map[string]*schema.EnumType, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT n.nspname AS schema, t.typname AS name,
+		       array_agg(e.enumlabel ORDER BY e.enumsortorder) AS values
+		FROM pg_type t
+		JOIN pg_namespace n ON n.oid = t.typnamespace
+		JOIN pg_enum e ON e.enumtypid = t.oid
+		WHERE t.typtype = 'e'
+		  AND n.nspname = ANY($1)
+		GROUP BY n.nspname, t.typname
+	`, schemas)
+	if err != nil {
+		return nil, fmt.Errorf("load enums map: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]*schema.EnumType)
+	for rows.Next() {
+		var ns, name string
+		var vals []string
+		if err := rows.Scan(&ns, &name, &vals); err != nil {
+			return nil, err
+		}
+		ns = strings.ToLower(ns)
+		name = strings.ToLower(name)
+		key := ns + "." + name
+		out[key] = &schema.EnumType{Schema: ns, Name: name, Values: vals}
+	}
+	return out, rows.Err()
+}
+
 // mergeTableConstraints appends CHECK / FOREIGN KEY rows from pg_constraint into existing tables.
 func mergeTableConstraints(ctx context.Context, pool *pgxpool.Pool, st *schema.SchemaState, schemas []string) error {
 	rows, err := pool.Query(ctx, `

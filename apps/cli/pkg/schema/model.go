@@ -24,7 +24,14 @@ type SchemaState struct {
 	UserTypes map[string]struct{}
 	// EnumValues holds the ordered enum labels for each live enum type keyed by "schema.name".
 	// Used by the differ to detect newly added enum values and emit ALTER TYPE ... ADD VALUE.
+	// Deprecated: prefer Enums which provides the full EnumType struct. EnumValues is kept
+	// for backward compatibility with codegen and dump/render consumers.
 	EnumValues map[string][]string
+	// Enums holds first-class enum type records keyed by "schema.name".
+	// Populated by the inspector from pg_type+pg_enum and by the source loader from
+	// CREATE TYPE ... AS ENUM AST nodes. Used by the differ for structured drift detection
+	// and by verify for undeclared-object checks.
+	Enums map[string]*EnumType
 	// PendingRLS holds RLS enable/force flags for tables that may not yet exist when
 	// ALTER TABLE ... ENABLE ROW LEVEL SECURITY is parsed (cross-file ordering issue).
 	// Applied as a post-processing step in LoadDesiredState. Not used by the inspector.
@@ -235,6 +242,17 @@ func (s *SchemaState) Clone() *SchemaState {
 			out.EnumValues[k] = append([]string(nil), v...)
 		}
 	}
+	if len(s.Enums) > 0 {
+		out.Enums = make(map[string]*EnumType, len(s.Enums))
+		for k, e := range s.Enums {
+			if e == nil {
+				continue
+			}
+			ec := *e
+			ec.Values = append([]string(nil), e.Values...)
+			out.Enums[k] = &ec
+		}
+	}
 	if len(s.PendingRLS) > 0 {
 		out.PendingRLS = make(map[string]*RLSFlags, len(s.PendingRLS))
 		for k, v := range s.PendingRLS {
@@ -392,6 +410,17 @@ func (t *Table) ColumnNames() []string {
 	}
 	return out
 }
+
+// EnumType models a CREATE TYPE ... AS ENUM (...) record. Keyed by "schema.name".
+type EnumType struct {
+	Schema string
+	Name   string
+	// Values is the ordered list of enum labels as declared/stored in pg_enum.enumsortorder.
+	Values []string
+}
+
+// Key returns the canonical "schema.name" lookup key for the enum.
+func (e EnumType) Key() string { return e.Schema + "." + e.Name }
 
 // DomainConstraint represents a single CHECK constraint on a domain.
 type DomainConstraint struct {

@@ -41,9 +41,17 @@ func captureCreateEnum(s *pgq.CreateEnumStmt, st *schema.SchemaState) error {
 	if st.UserTypes == nil {
 		st.UserTypes = make(map[string]struct{})
 	}
+	if st.Enums == nil {
+		st.Enums = make(map[string]*schema.EnumType)
+	}
 	key := strings.ToLower(sch) + "." + strings.ToLower(name)
 	st.EnumValues[key] = vals
 	st.UserTypes[key] = struct{}{}
+	st.Enums[key] = &schema.EnumType{
+		Schema: strings.ToLower(sch),
+		Name:   strings.ToLower(name),
+		Values: vals,
+	}
 	return nil
 }
 

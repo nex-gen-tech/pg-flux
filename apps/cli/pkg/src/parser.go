@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -471,6 +472,63 @@ func addCreateTable(cs *pgq.CreateStmt, raw *pgq.RawStmt, content string, lines 
 			}
 		}
 	}
+	// Fix: after parsing @renamed hints on columns, update any constraint DefSQL that
+	// still references the old column name. This ensures the source model's constraint
+	// definition matches what the live DB will have after the rename is applied — so
+	// subsequent calls to "migrate generate" do not emit spurious DROP/ADD CONSTRAINT.
+	applyColumnRenameHintsToConstraints(t)
 	st.Tables[key] = t
 	return nil
+}
+
+// applyColumnRenameHintsToConstraints rewrites constraint DefSQL fields on t to replace
+// any old column name (from a @renamed hint) with the new column name. This keeps the
+// source model's constraint definitions in sync with what the live DB has after the
+// rename migration has been applied.
+func applyColumnRenameHintsToConstraints(t *schema.Table) {
+	if t == nil {
+		return
+	}
+	// Collect old->new mappings from columns that carry a @renamed hint.
+	type renameEntry struct {
+		re      *regexp.Regexp
+		newName string
+	}
+	var renames []renameEntry
+	for _, col := range t.Columns {
+		if col == nil || col.RenameFrom == "" {
+			continue
+		}
+		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(col.RenameFrom) + `\b`)
+		renames = append(renames, renameEntry{re: re, newName: col.Name})
+	}
+	if len(renames) == 0 {
+		return
+	}
+	applyRenames := func(s string) string {
+		for _, r := range renames {
+			s = r.re.ReplaceAllString(s, r.newName)
+		}
+		return s
+	}
+	for _, c := range t.Checks {
+		if c != nil {
+			c.DefSQL = applyRenames(c.DefSQL)
+		}
+	}
+	for _, c := range t.Uniques {
+		if c != nil {
+			c.DefSQL = applyRenames(c.DefSQL)
+		}
+	}
+	for _, c := range t.Excludes {
+		if c != nil {
+			c.DefSQL = applyRenames(c.DefSQL)
+		}
+	}
+	for _, c := range t.ForeignKeys {
+		if c != nil {
+			c.DefSQL = applyRenames(c.DefSQL)
+		}
+	}
 }

@@ -112,3 +112,23 @@ jobs:
 
           echo "--- verify (must be clean) ---"
           "$BIN" verify
+
+      - name: replay express-bookmarks example
+        working-directory: examples/express-bookmarks
+        env:
+          BIN: ${{ github.workspace }}/apps/cli/pg-flux
+          DATABASE_URL: postgres://pgflux:pgflux@localhost:5432/pgflux_express_bookmarks?sslmode=disable
+          PGPASSWORD: pgflux
+        run: |
+          set -eu
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "DROP DATABASE IF EXISTS pgflux_express_bookmarks;"
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "CREATE DATABASE pgflux_express_bookmarks;"
+
+          echo "--- apply migrations ---"
+          "$BIN" migrate apply
+
+          echo "--- drift (must be clean) ---"
+          "$BIN" drift
+
+          echo "--- verify (must be clean) ---"
+          "$BIN" verify

@@ -155,6 +155,90 @@ CREATE TYPE public.float8range AS RANGE (subtype = float8);
 	}
 }
 
+// TestVerify_triggerOutOfBand_integration is the integration gate for out-of-band
+// trigger detection. It:
+//  1. Applies a schema that declares a trigger in source.
+//  2. Runs verify → expects zero undeclared objects (trigger is declared).
+//  3. Creates a second trigger directly in the DB without a source declaration.
+//  4. Runs verify → expects exactly that trigger flagged as undeclared.
+func TestVerify_triggerOutOfBand_integration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := freshDB(t, ctx, "pgflux_verify_trigger_oob")
+	ensureRoles(t, ctx, pool)
+
+	// Build the schema: a table, an updated_at function, and one declared trigger.
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE public.items (
+			id         bigserial PRIMARY KEY,
+			name       text NOT NULL,
+			updated_at timestamptz NOT NULL DEFAULT now()
+		);
+		CREATE OR REPLACE FUNCTION public.set_updated_at()
+		  RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN NEW.updated_at := clock_timestamp(); RETURN NEW; END;
+		$$;
+		CREATE TRIGGER items_set_updated_at
+		  BEFORE UPDATE ON public.items
+		  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+	`)
+	require.NoError(t, err)
+
+	// Write matching source files.
+	srcDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "items.sql"), []byte(`
+CREATE TABLE public.items (
+	id         bigserial PRIMARY KEY,
+	name       text NOT NULL,
+	updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+  RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at := clock_timestamp(); RETURN NEW; END;
+$$;
+CREATE TRIGGER items_set_updated_at
+  BEFORE UPDATE ON public.items
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+`), 0o644))
+
+	desired, err := src.LoadDesiredState(src.LoadOptions{SchemaDir: srcDir})
+	require.NoError(t, err)
+
+	// Sanity: loader captured the declared trigger.
+	require.Contains(t, desired.Triggers, "public.items/items_set_updated_at",
+		"loader must populate Triggers from CREATE TRIGGER in source")
+
+	live, err := inspector.Inspect(ctx, pool, inspector.Options{Schemas: []string{"public"}})
+	require.NoError(t, err)
+
+	// Step 2: verify with declared trigger → should be clean.
+	report := Verify(desired, live)
+	if len(report.Triggers) != 0 {
+		t.Fatalf("expected no undeclared triggers before out-of-band addition; got %v", report.Triggers)
+	}
+
+	// Step 3: add an out-of-band trigger directly to the DB (not in source).
+	// We reuse the same function — we just need a second trigger name.
+	_, err = pool.Exec(ctx, `
+		CREATE TRIGGER items_oob_audit
+		  AFTER INSERT OR UPDATE OR DELETE ON public.items
+		  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+	`)
+	require.NoError(t, err)
+
+	// Step 4: re-inspect and verify → must flag the out-of-band trigger.
+	live2, err := inspector.Inspect(ctx, pool, inspector.Options{Schemas: []string{"public"}})
+	require.NoError(t, err)
+
+	report2 := Verify(desired, live2)
+	require.Contains(t, report2.Triggers, "public.items/items_oob_audit",
+		"verify must report the out-of-band trigger as undeclared")
+	require.NotContains(t, report2.Triggers, "public.items/items_set_updated_at",
+		"verify must NOT flag the declared trigger")
+	require.Greater(t, report2.Count(), 0,
+		"report must be non-clean when an out-of-band trigger exists")
+}
+
 // TestVerify_fastapiTodoExampleIsClean is the end-to-end smoke for issue #9:
 // apply the published example migrations to a fresh DB, load the published
 // schema/ directory as desired, and verify against live. Must report clean.

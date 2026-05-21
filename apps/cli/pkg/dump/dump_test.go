@@ -149,3 +149,44 @@ func TestVerify_findsExtraTable(t *testing.T) {
 	r := Verify(des, live)
 	require.Equal(t, []string{"public.b"}, r.Tables)
 }
+
+// TestVerify_triggerDeclaredInSourceIsClean confirms that a trigger that exists
+// in both source and live does NOT appear in the verify report.
+func TestVerify_triggerDeclaredInSourceIsClean(t *testing.T) {
+	tg := &schema.Trigger{Schema: "public", Table: "posts", Name: "posts_set_updated_at",
+		DefSQL: "CREATE TRIGGER posts_set_updated_at BEFORE UPDATE ON public.posts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at()"}
+	k := schema.TriggerKey("public", "posts", "posts_set_updated_at")
+
+	des := &schema.SchemaState{Triggers: map[string]*schema.Trigger{k: tg}}
+	live := &schema.SchemaState{Triggers: map[string]*schema.Trigger{k: tg}}
+
+	r := Verify(des, live)
+	require.Equal(t, 0, r.Count(), "declared trigger should not appear as undeclared")
+	require.Empty(t, r.Triggers)
+}
+
+// TestVerify_outOfBandTriggerIsReported confirms that a trigger present in live
+// but absent from source is flagged as an undeclared object — the primary CI
+// gate for out-of-band trigger additions.
+func TestVerify_outOfBandTriggerIsReported(t *testing.T) {
+	declared := &schema.Trigger{Schema: "public", Table: "posts", Name: "posts_set_updated_at",
+		DefSQL: "CREATE TRIGGER posts_set_updated_at BEFORE UPDATE ON public.posts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at()"}
+	outOfBand := &schema.Trigger{Schema: "public", Table: "posts", Name: "posts_audit",
+		DefSQL: "CREATE TRIGGER posts_audit AFTER INSERT OR UPDATE OR DELETE ON public.posts FOR EACH ROW EXECUTE FUNCTION public.audit_log()"}
+
+	declaredKey := schema.TriggerKey("public", "posts", "posts_set_updated_at")
+	outOfBandKey := schema.TriggerKey("public", "posts", "posts_audit")
+
+	des := &schema.SchemaState{Triggers: map[string]*schema.Trigger{
+		declaredKey: declared,
+	}}
+	live := &schema.SchemaState{Triggers: map[string]*schema.Trigger{
+		declaredKey: declared,
+		outOfBandKey: outOfBand,
+	}}
+
+	r := Verify(des, live)
+	require.Equal(t, 1, r.Count(), "one undeclared trigger expected")
+	require.Equal(t, []string{outOfBandKey}, r.Triggers, "out-of-band trigger key must be reported")
+	require.NotContains(t, r.Triggers, declaredKey, "declared trigger must not be flagged")
+}

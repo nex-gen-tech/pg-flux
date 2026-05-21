@@ -68,8 +68,9 @@ func TestInitCommand_nonInteractiveSkipsPrompts(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestInitCommand_skipsExampleWhenSchemaDirNonEmpty verifies that we do not
-// overwrite or pollute a user's existing schema/ directory with users.sql.
+// TestInitCommand_skipsExampleWhenSchemaDirNonEmpty verifies that init writes
+// users.sql even when the schema dir already contains other files, but does not
+// overwrite a pre-existing users.sql.
 func TestInitCommand_skipsExampleWhenSchemaDirNonEmpty(t *testing.T) {
 	d := t.TempDir()
 	t.Chdir(d)
@@ -79,18 +80,48 @@ func TestInitCommand_skipsExampleWhenSchemaDirNonEmpty(t *testing.T) {
 
 	t.Setenv("PGFLUX_NON_INTERACTIVE", "1")
 	r := newRoot()
-	// --with-examples=true is the default; we want to confirm it self-skips.
+	// --with-examples=true is the default.
 	r.SetArgs([]string{"init"})
 	require.NoError(t, r.Execute())
 
-	// users.sql must NOT be written when schema/ already has content.
+	// users.sql should be written because it does not yet exist.
 	_, err := os.Stat(filepath.Join(d, "schema", "users.sql"))
-	require.True(t, os.IsNotExist(err),
-		"init must not write users.sql when schema/ already has content")
+	require.NoError(t, err, "init should write users.sql when it does not already exist")
 	// Existing file is untouched.
 	b, err := os.ReadFile(filepath.Join(d, "schema", "existing.sql"))
 	require.NoError(t, err)
 	require.Equal(t, "CREATE TABLE x (id int);\n", string(b))
+}
+
+// TestInitCommand_doesNotOverwriteExistingUsersSQL verifies that init skips
+// schema/users.sql when the file already exists and preserves its content.
+func TestInitCommand_doesNotOverwriteExistingUsersSQL(t *testing.T) {
+	d := t.TempDir()
+	t.Chdir(d)
+
+	// Pre-create config and a schema/users.sql with custom content.
+	cfgContent := "version: 1\nschema_dir: ./schema\nmigrations_dir: ./migrations\ntarget_schemas: [ public ]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(d, ".pg-flux.yml"), []byte(cfgContent), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(d, "schema"), 0o755))
+	customSQL := "-- my custom schema\nCREATE TABLE custom (id int);\n"
+	require.NoError(t, os.WriteFile(filepath.Join(d, "schema", "users.sql"), []byte(customSQL), 0o644))
+
+	t.Setenv("PGFLUX_NON_INTERACTIVE", "1")
+	var out bytes.Buffer
+	r := newRoot()
+	r.SetOut(&out)
+	r.SetArgs([]string{"init", "--dir", "./schema", "--migrations-dir", "./migrations"})
+	require.NoError(t, r.Execute())
+
+	// Output must mention the skip.
+	require.Contains(t, out.String(), "skipped schema/users.sql (already exists)",
+		"init should report skipped file; got: %s", out.String())
+
+	// File content must be unchanged.
+	got, err := os.ReadFile(filepath.Join(d, "schema", "users.sql"))
+	require.NoError(t, err)
+	require.Equal(t, customSQL, string(got),
+		"init must not overwrite pre-existing schema/users.sql")
 }
 
 // TestSilenceUsage_appliedRecursively verifies that every command in the tree

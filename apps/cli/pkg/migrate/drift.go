@@ -69,6 +69,12 @@ func extractBaselineHash(content []byte) string {
 // We only check the first pending file: subsequent files were generated against
 // state-after-previous-file, which we don't materialize, so their baseline cannot
 // be meaningfully compared against current live without reapplying intermediates.
+//
+// A file that was updated by "migrate rehash" stores a SHA-256 of its own
+// content (minus the hash line) rather than a live-DB state hash. That value
+// will never match hashstate.OfSchemaState(live), so we also accept it when
+// ContentHashOfMigration(content) matches — indicating the user reviewed and
+// accepted the edit.
 func checkBaselineDrift(ctx context.Context, pool *pgxpool.Pool, schemas []string, firstPendingName string, firstPendingContent []byte) error {
 	expected := extractBaselineHash(firstPendingContent)
 	if expected == "" {
@@ -76,6 +82,14 @@ func checkBaselineDrift(ctx context.Context, pool *pgxpool.Pool, schemas []strin
 		// Skip silently rather than fail; this preserves backward compatibility.
 		return nil
 	}
+
+	// Content-hash acceptance: "migrate rehash" writes ContentHashOfMigration
+	// into the baseline-hash line to signal that the user reviewed and accepted
+	// the manual edits.  No DB inspection is needed in this case.
+	if expected == ContentHashOfMigration(firstPendingContent) {
+		return nil
+	}
+
 	live, err := inspector.Inspect(ctx, pool, inspector.Options{Schemas: schemas})
 	if err != nil {
 		return fmt.Errorf("inspect live for drift check: %w", err)
