@@ -34,8 +34,8 @@ One model. One CLI. Every catalog object pg-flux touches gets a typed representa
 ## 30-second example
 
 ```bash
-# install
-go install github.com/nexg/pg-flux/cmd/pg-flux@latest
+# install (no Go required)
+curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | sh
 
 # scaffold a project
 pg-flux init
@@ -97,14 +97,26 @@ See [ROADMAP.md](./ROADMAP.md) for what's planned and what's deliberately out of
 
 ## Install
 
+The fastest path — no Go required:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | sh
+```
+
+That detects your OS + arch (macOS and Linux, amd64 + arm64), downloads the right binary from the latest [GitHub Release](https://github.com/nexg/pg-flux/releases), verifies the SHA-256 checksum, and drops `pg-flux` into `/usr/local/bin` (or `~/.local/bin` if that isn't writable).
+
+Other paths:
+
 | Path | Command |
 |---|---|
-| Go install | `go install github.com/nexg/pg-flux/cmd/pg-flux@latest` |
-| Binary release | [GitHub Releases](https://github.com/nexg/pg-flux/releases) |
+| **curl \| sh** | `curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh \| sh` |
+| Manual binary | Download from [GitHub Releases](https://github.com/nexg/pg-flux/releases), `tar -xzf`, move to `/usr/local/bin` |
+| Pin a version | `curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh \| PGFLUX_VERSION=v0.1.0 sh` |
+| Go install | `go install github.com/nexg/pg-flux/cmd/pg-flux@latest` (requires Go 1.25+) |
 | Build from source | `git clone … && cd pg-flux/apps/cli && go build -o pg-flux ./cmd/pg-flux` |
 | Docker (coming soon) | `docker run --rm -v $(pwd):/app pgflux/cli:0.1 migrate apply` |
 
-You need Go 1.25+ for source builds. The binary release has no runtime dependencies beyond a libc.
+Binaries are statically linked against libc only — no other runtime dependencies. Supported platforms: `darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`.
 
 ## Documentation
 

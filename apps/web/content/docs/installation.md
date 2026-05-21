@@ -7,9 +7,75 @@ description: Get pg-flux on your machine — Go install, binary, Docker, or buil
 
 Pick the install path that matches your taste. All of them give you the same `pg-flux` binary; the differences are just how you get there.
 
-## Go install (most direct)
+## Quick install (recommended)
 
-If you have Go 1.25+ already, this is the shortest path:
+One command. No Go required.
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | sh
+```
+
+What it does:
+
+1. Detects your OS (macOS or Linux) and arch (amd64 or arm64).
+2. Resolves the latest release tag from GitHub.
+3. Downloads the matching binary tarball.
+4. Verifies the SHA-256 against the release's `SHA256SUMS` file.
+5. Extracts and installs to `/usr/local/bin/pg-flux` (or `~/.local/bin` if `/usr/local/bin` isn't writable).
+6. Runs `pg-flux version` to confirm.
+
+Verify:
+
+```bash
+$ pg-flux version
+pg-flux v0.1.0
+```
+
+> [!TIP]
+> Pin to a specific version: `curl -sSfL https://raw.githubusercontent.com/nexg/pg-flux/main/install.sh | PGFLUX_VERSION=v0.1.0 sh`.
+> Override the install directory: `... | PGFLUX_BIN_DIR=$HOME/.local/bin sh`.
+
+## Manual binary download
+
+If you'd rather not pipe a script into your shell, grab the binary directly from [GitHub Releases](https://github.com/nexg/pg-flux/releases).
+
+```bash
+# macOS Apple Silicon
+curl -sSfL -o pg-flux.tar.gz https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-darwin-arm64.tar.gz
+tar -xzf pg-flux.tar.gz
+sudo mv pg-flux /usr/local/bin/
+pg-flux version
+
+# macOS Intel
+curl -sSfL -o pg-flux.tar.gz https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-darwin-amd64.tar.gz
+tar -xzf pg-flux.tar.gz
+sudo mv pg-flux /usr/local/bin/
+
+# Linux x86_64
+curl -sSfL -o pg-flux.tar.gz https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-linux-amd64.tar.gz
+tar -xzf pg-flux.tar.gz
+sudo mv pg-flux /usr/local/bin/
+
+# Linux ARM64
+curl -sSfL -o pg-flux.tar.gz https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-linux-arm64.tar.gz
+tar -xzf pg-flux.tar.gz
+sudo mv pg-flux /usr/local/bin/
+```
+
+Always verify the checksum if you download manually:
+
+```bash
+curl -sSfL -o SHA256SUMS https://github.com/nexg/pg-flux/releases/latest/download/SHA256SUMS
+shasum -a 256 -c SHA256SUMS --ignore-missing
+```
+
+> [!NOTE]
+> Supported platforms are `darwin-arm64`, `darwin-amd64`, `linux-amd64`, and `linux-arm64`.
+> Windows isn't shipped because the `libpg_query` C library doesn't build cleanly on it yet.
+
+## Go install
+
+If you already have Go 1.25+ and would rather build the binary yourself:
 
 ```bash
 go install github.com/nexg/pg-flux/cmd/pg-flux@latest
@@ -22,44 +88,7 @@ The binary lands in `$GOBIN` (or `$GOPATH/bin` if `GOBIN` isn't set). Make sure 
 export PATH="$PATH:$(go env GOBIN):$(go env GOPATH)/bin"
 ```
 
-Verify:
-
-```bash
-$ pg-flux version
-pg-flux v0.1.0
-```
-
-> [!TIP]
-> To pin to a specific version: `go install github.com/nexg/pg-flux/cmd/pg-flux@v0.1.0`.
-> Replace `latest` with the tag you want.
-
-## Binary release
-
-For machines that don't have Go, grab a pre-built binary from [GitHub Releases](https://github.com/nexg/pg-flux/releases).
-
-```bash
-# Linux x86_64
-curl -sSL https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-linux-amd64.tar.gz \
-  | tar xz
-sudo mv pg-flux /usr/local/bin/
-pg-flux version
-
-# macOS Apple Silicon
-curl -sSL https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-darwin-arm64.tar.gz \
-  | tar xz
-sudo mv pg-flux /usr/local/bin/
-
-# macOS Intel
-curl -sSL https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-darwin-amd64.tar.gz \
-  | tar xz
-sudo mv pg-flux /usr/local/bin/
-
-# Windows (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/nexg/pg-flux/releases/latest/download/pg-flux-windows-amd64.zip" -OutFile pg-flux.zip
-Expand-Archive pg-flux.zip -DestinationPath C:\bin
-```
-
-Binaries are statically linked and have no external dependencies beyond a libc.
+Pin to a specific tag with `@v0.1.0` instead of `@latest`.
 
 ## From source
 
