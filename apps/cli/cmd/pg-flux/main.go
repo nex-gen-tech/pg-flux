@@ -92,10 +92,12 @@ var errDriftDetected = errors.New("drift: schema has changed")
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
-		if errors.Is(err, errDriftDetected) {
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stderr, err)
+		// cobra prints the error message itself ("Error: ...") for any command
+		// without SilenceErrors=true. We MUST NOT also print here — that
+		// produced a double-printed stack of the same error.
+		// SilenceUsage is set on every command so the flags block is suppressed;
+		// SilenceErrors stays false everywhere except cmdDrift, which uses the
+		// errDriftDetected sentinel to exit 1 quietly.
 		os.Exit(1)
 	}
 }
