@@ -2,11 +2,10 @@
 title: Quick start
 group: Getting started
 order: 1
+description: From zero to a working pg-flux setup — schema, migration, generated types — in five minutes.
 ---
 
-# Quick start
-
-Get from zero to a working pg-flux setup in five minutes. By the end of this guide you'll have a managed schema, a generated migration, and typed Go + TypeScript modules.
+Get from zero to a working pg-flux setup in five minutes. By the end of this guide you'll have a managed schema, a generated migration, and typed Go + TypeScript modules synced with your database.
 
 ## Install
 
@@ -28,6 +27,10 @@ You'll also need:
 - **PostgreSQL 14 or newer** running somewhere you can reach.
 - For codegen: **Go 1.25+** (if generating Go types) and/or **TypeScript** (any modern version) in the target project.
 
+> [!TIP]
+> The fastest local Postgres is a Docker container. One-liner:
+> `docker run -d -e POSTGRES_PASSWORD=pg -p 5432:5432 postgres:17`.
+
 ## Scaffold a project
 
 In a fresh directory:
@@ -38,7 +41,7 @@ pg-flux init
 
 This creates:
 
-```
+```text
 .pg-flux.yml          # tool-level config (DB URL, schema dir, migrations dir)
 schema/               # your declarative SQL lives here
   schema.sql          # example seed file
@@ -55,7 +58,7 @@ migrations_dir: ./migrations
 target_schemas: [public]
 ```
 
-(Or set `DATABASE_URL` in the environment — the CLI flag and `--db` always win.)
+(Or set `DATABASE_URL` in the environment — the CLI flag `--db` always wins over both.)
 
 ## Write your schema declaratively
 
@@ -79,7 +82,9 @@ CREATE TABLE posts (
 );
 ```
 
-You can split across many files — pg-flux loads `schema/**/*.sql`.
+> [!NOTE]
+> You can split into many files — pg-flux loads `schema/**/*.sql` in
+> filename order. A common convention is `schema/<kind>/<object>.sql`.
 
 ## Generate a migration
 
@@ -89,7 +94,7 @@ pg-flux migrate generate --label initial_schema
 
 pg-flux inspects your live database, computes the minimum-DDL diff, and writes a migration file:
 
-```
+```text
 Generated: migrations/20260520_103245_initial_schema.sql (8 statements)
 ```
 
@@ -101,9 +106,7 @@ The file embeds a baseline hash so `apply` can detect drift if anyone manually m
 pg-flux migrate apply
 ```
 
-Output:
-
-```
+```text
 apply 20260520_103245_initial_schema.sql ...
       ok
 Applied 1 migration(s), 0 already up to date.
@@ -130,7 +133,7 @@ pg-flux gen --lang ts --out ./src/db \
 
 You'll get one file per object kind:
 
-```
+```text
 internal/dbgen/
   tables.go         # struct per table
   enums.go          # typed constants + sql.Scanner/Valuer
@@ -156,7 +159,7 @@ Writes `.pg-flux-codegen.yml` with every option documented inline.
 
 ## Iterate
 
-Whenever you change `schema/`, run the same two commands:
+Whenever you change `schema/`, run the same three commands:
 
 ```bash
 pg-flux migrate generate --label add_column
@@ -167,10 +170,15 @@ pg-flux gen
 For CI, use the `--check` flags to fail builds on stale state:
 
 ```bash
-pg-flux drift --strict       # exit 1 if live ≠ source
-pg-flux verify --strict      # exit 1 if live has undeclared objects
-pg-flux gen --check          # exit 1 if generated files are stale
+pg-flux drift --strict       # exit 2 if live ≠ source
+pg-flux verify --strict      # exit 4 if live has undeclared objects
+pg-flux gen --check          # exit 3 if generated files are stale
 ```
+
+> [!IMPORTANT]
+> Treat the three `--strict` / `--check` commands as a single CI canary.
+> They cover schema drift in three independent directions: source-side,
+> live-side, and codegen-side.
 
 ## What next?
 
@@ -178,4 +186,4 @@ pg-flux gen --check          # exit 1 if generated files are stale
 - **[Codegen →](/docs/codegen.html)** — every emit option, hints, config file reference
 - **[Dump · verify · pull →](/docs/dump.html)** — bootstrap pg-flux against an existing DB
 - **[Hazards →](/docs/hazards.html)** — how pg-flux keeps migrations safe under load
-- **[CLI reference →](/docs/cli.html)** — every command and flag
+- **[CLI reference →](/docs/cli-overview.html)** — every command and flag

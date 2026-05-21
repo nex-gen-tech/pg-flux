@@ -1,27 +1,29 @@
 /**
- * Dev server: rebuild on every request so local edits show up immediately.
- * Trades startup speed for development ergonomics.
+ * Dev server — rebuild on every request. Slow but always fresh; ideal for
+ * editing markdown content + iterating on components.
  */
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
-async function rebuild() {
-  return new Promise<void>((resolve, reject) => {
-    const p = spawn("bun", ["run", "scripts/build.ts"], { stdio: "inherit" });
-    p.on("exit", code => (code === 0 ? resolve() : reject(new Error("build failed"))));
-  });
+function rebuild(): boolean {
+  const r = spawnSync("bun", ["run", "scripts/build.tsx"], { stdio: "inherit" });
+  return r.status === 0;
 }
 
-await rebuild();
+if (!rebuild()) {
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PORT || 3000);
 
 Bun.serve({
   port: PORT,
   async fetch(req) {
-    // Rebuild every request — slow but always-fresh.
-    await rebuild().catch(() => {});
     const url = new URL(req.url);
     let path = url.pathname;
+    // Only rebuild on document requests, not asset hits.
+    if (path === "/" || path.endsWith(".html") || !path.includes(".")) {
+      rebuild();
+    }
     if (path === "/") path = "/index.html";
     if (!path.includes(".")) path = path.replace(/\/?$/, ".html");
     const file = Bun.file("./dist" + path);

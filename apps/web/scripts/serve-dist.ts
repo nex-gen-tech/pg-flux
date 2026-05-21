@@ -1,5 +1,5 @@
 /**
- * Preview the production build locally. Reads from dist/ without rebuilding.
+ * Preview the static build. Reads from dist/ without rebuilding.
  */
 const PORT = Number(process.env.PORT || 4000);
 

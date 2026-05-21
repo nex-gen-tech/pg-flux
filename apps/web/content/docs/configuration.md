@@ -111,5 +111,5 @@ Any text before `pg-flux:` becomes the field's documentation comment.
 
 ## See also
 
-- [CLI reference →](/docs/cli.html)
+- [CLI reference →](/docs/cli-overview.html)
 - [Codegen overview →](/docs/codegen.html)
