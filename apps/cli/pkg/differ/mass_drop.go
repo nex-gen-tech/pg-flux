@@ -42,7 +42,10 @@ func (e *MassDropError) Error() string {
 // Counts:
 //   - Live objects considered "at risk" = tables + (non-materialized) views + sequences.
 //     Materialized views are included as tables in PG terms but we count them in views.
-//   - Drops = changes with kind in {DropTable, DropView, DropViewEarly, DropSequence}.
+//   - Drops = changes with kind in {DropTable, DropView, DropViewEarly, DropSequence}
+//     MINUS any view that is being dropped-and-recreated (it's not a real drop, just
+//     a forced rebuild because a referenced column type is changing, or because the
+//     view body changed). Counting those as "drops" inflated the false-positive rate.
 //
 // Thresholds:
 //   - Wipe (live > 0 AND drop count == live count): always trips, even at low absolute numbers.
@@ -76,6 +79,18 @@ func checkMassDrop(changes []change, live *schema.SchemaState, allow bool, thres
 	if liveCount == 0 {
 		return nil
 	}
+	// First pass: collect view keys that are being re-created in the same plan.
+	// These views are NOT real drops — diffViews emits Drop+Create pairs whenever
+	// the view body changes, and injectViewRefreshForTypeChanges emits the same
+	// pair when a referenced column's type changes. Counting them as mass-drop
+	// drops produces misleading errors like "VIEW public.active_todos would be
+	// dropped" when in fact the view exists in both desired and live.
+	recreatedView := make(map[string]bool)
+	for _, c := range changes {
+		if c.kind == plan.ChangeCreateView && c.v != nil {
+			recreatedView[schema.ViewKey(c.v.Schema, c.v.Name)] = true
+		}
+	}
 	var names []string
 	dropCount := 0
 	for _, c := range changes {
@@ -86,6 +101,9 @@ func checkMassDrop(changes []change, live *schema.SchemaState, allow bool, thres
 				names = append(names, "TABLE "+c.sch+"."+c.tbl)
 			}
 		case plan.ChangeDropView, plan.ChangeDropViewEarly:
+			if c.v != nil && recreatedView[schema.ViewKey(c.v.Schema, c.v.Name)] {
+				continue // drop+recreate, not a real drop
+			}
 			dropCount++
 			if len(names) < 10 && c.v != nil {
 				names = append(names, "VIEW "+c.v.Schema+"."+c.v.Name)

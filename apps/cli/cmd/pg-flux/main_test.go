@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,4 +29,101 @@ func TestInitCommand(t *testing.T) {
 	// Migrations dir is created.
 	_, err = os.Stat(filepath.Join(d, "migrations"))
 	require.NoError(t, err)
+}
+
+// TestInitCommand_nonInteractiveSkipsPrompts verifies that when stdin is not a
+// TTY (or PGFLUX_NON_INTERACTIVE is set), init silently uses defaults instead
+// of mashing the "Schema directory [...]:" prompt into stdout.
+func TestInitCommand_nonInteractiveSkipsPrompts(t *testing.T) {
+	d := t.TempDir()
+	t.Chdir(d)
+	// Force non-interactive — covers the case the test process happens to have a TTY.
+	t.Setenv("PGFLUX_NON_INTERACTIVE", "1")
+	// Belt-and-braces: redirect stdin from /dev/null so even if the env var were
+	// honored at the wrong time, the read would EOF immediately rather than hang.
+	devnull, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	defer devnull.Close()
+	oldStdin := os.Stdin
+	os.Stdin = devnull
+	t.Cleanup(func() { os.Stdin = oldStdin })
+
+	var out bytes.Buffer
+	r := newRoot()
+	r.SetOut(&out)
+	// Intentionally don't pass --dir / --migrations-dir so the prompts would fire.
+	r.SetArgs([]string{"init", "--with-examples=false"})
+	require.NoError(t, r.Execute())
+
+	require.NotContains(t, out.String(), "Schema directory [",
+		"non-tty init should not surface interactive prompts; got: %s", out.String())
+	require.NotContains(t, out.String(), "Migrations directory [",
+		"non-tty init should not surface interactive prompts; got: %s", out.String())
+	// Defaults should still produce a config and the dirs.
+	_, err = os.Stat(filepath.Join(d, ".pg-flux.yml"))
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(d, "schema"))
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(d, "migrations"))
+	require.NoError(t, err)
+}
+
+// TestInitCommand_skipsExampleWhenSchemaDirNonEmpty verifies that we do not
+// overwrite or pollute a user's existing schema/ directory with users.sql.
+func TestInitCommand_skipsExampleWhenSchemaDirNonEmpty(t *testing.T) {
+	d := t.TempDir()
+	t.Chdir(d)
+	require.NoError(t, os.MkdirAll(filepath.Join(d, "schema"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(d, "schema", "existing.sql"),
+		[]byte("CREATE TABLE x (id int);\n"), 0o644))
+
+	t.Setenv("PGFLUX_NON_INTERACTIVE", "1")
+	r := newRoot()
+	// --with-examples=true is the default; we want to confirm it self-skips.
+	r.SetArgs([]string{"init"})
+	require.NoError(t, r.Execute())
+
+	// users.sql must NOT be written when schema/ already has content.
+	_, err := os.Stat(filepath.Join(d, "schema", "users.sql"))
+	require.True(t, os.IsNotExist(err),
+		"init must not write users.sql when schema/ already has content")
+	// Existing file is untouched.
+	b, err := os.ReadFile(filepath.Join(d, "schema", "existing.sql"))
+	require.NoError(t, err)
+	require.Equal(t, "CREATE TABLE x (id int);\n", string(b))
+}
+
+// TestSilenceUsage_appliedRecursively verifies that every command in the tree
+// has SilenceUsage=true so that a RunE error does not dump the full --help block.
+func TestSilenceUsage_appliedRecursively(t *testing.T) {
+	var check func(c *cobra.Command)
+	check = func(c *cobra.Command) {
+		require.Truef(t, c.SilenceUsage,
+			"command %q has SilenceUsage=false; expected true", c.CommandPath())
+		for _, sub := range c.Commands() {
+			check(sub)
+		}
+	}
+	check(newRoot())
+}
+
+// TestSchemaDirAlias verifies --schema is still accepted (kept as a hidden alias
+// for back-compat) and that --schema-dir is the canonical flag name.
+func TestSchemaDirAlias(t *testing.T) {
+	// Reset between subtests.
+	orig := schemaPath
+	t.Cleanup(func() { schemaPath = orig })
+
+	r := newRoot()
+	require.NoError(t, r.PersistentFlags().Parse([]string{"--schema-dir", "/tmp/a"}))
+	require.Equal(t, "/tmp/a", schemaPath)
+
+	r2 := newRoot()
+	require.NoError(t, r2.PersistentFlags().Parse([]string{"--schema", "/tmp/b"}))
+	require.Equal(t, "/tmp/b", schemaPath, "--schema alias should still set schemaPath")
+
+	// --schema must be hidden from --help.
+	f := r2.PersistentFlags().Lookup("schema")
+	require.NotNil(t, f)
+	require.True(t, f.Hidden, "--schema should be a hidden alias")
 }
