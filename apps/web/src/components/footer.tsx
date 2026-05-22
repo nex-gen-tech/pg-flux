@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Logo } from "./logo";
+import { BASE } from "@/lib/base";
 
 interface LinkGroup {
   title: string;
@@ -10,20 +11,20 @@ const GROUPS: LinkGroup[] = [
   {
     title: "Documentation",
     links: [
-      { label: "Quick start", href: "/docs/quick-start.html" },
-      { label: "Installation", href: "/docs/installation.html" },
-      { label: "Migrations", href: "/docs/migrations.html" },
-      { label: "Codegen", href: "/docs/codegen.html" },
-      { label: "Hazards", href: "/docs/hazards.html" },
+      { label: "Quick start", href: BASE + "/docs/quick-start.html" },
+      { label: "Installation", href: BASE + "/docs/installation.html" },
+      { label: "Migrations", href: BASE + "/docs/migrations.html" },
+      { label: "Codegen", href: BASE + "/docs/codegen.html" },
+      { label: "Hazards", href: BASE + "/docs/hazards.html" },
     ],
   },
   {
     title: "Reference",
     links: [
-      { label: "CLI overview", href: "/docs/cli-overview.html" },
-      { label: "Configuration", href: "/docs/configuration.html" },
-      { label: "Drift recovery", href: "/docs/drift.html" },
-      { label: "Dump · verify · pull", href: "/docs/dump.html" },
+      { label: "CLI overview", href: BASE + "/docs/cli-overview.html" },
+      { label: "Configuration", href: BASE + "/docs/configuration.html" },
+      { label: "Drift recovery", href: BASE + "/docs/drift.html" },
+      { label: "Dump · verify · pull", href: BASE + "/docs/dump.html" },
     ],
   },
   {
@@ -44,7 +45,7 @@ export function Footer() {
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4 lg:gap-8">
           {/* Brand */}
           <div className="lg:col-span-1">
-            <a href="/" className="inline-flex items-center gap-2 font-semibold tracking-tight">
+            <a href={BASE + "/"} className="inline-flex items-center gap-2 font-semibold tracking-tight">
               <Logo className="text-primary" size={20} />
               <span>pg-flux</span>
             </a>

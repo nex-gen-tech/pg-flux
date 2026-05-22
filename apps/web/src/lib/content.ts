@@ -7,6 +7,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Marked } from "marked";
+import { BASE } from "./base";
 import matter from "gray-matter";
 import { createHighlighter, type Highlighter } from "shiki";
 
@@ -251,7 +252,7 @@ export async function loadAllPages(): Promise<Page[]> {
     const slug = "docs/" + rel.replace(/\.md$/, "").replace(/\\/g, "/");
     pages.push({
       slug,
-      href: "/" + slug + ".html",
+      href: BASE + "/" + slug + ".html",
       title,
       group: (meta.group as string) || "Reference",
       order: meta.order ? Number(meta.order) : 99,

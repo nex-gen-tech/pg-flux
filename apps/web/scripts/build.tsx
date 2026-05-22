@@ -18,6 +18,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Landing } from "../src/pages/landing";
 import { DocPage } from "../src/pages/doc";
 import { loadAllPages, type Page } from "../src/lib/content";
+import { BASE } from "../src/lib/base";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const OUT = join(ROOT, "dist");
@@ -54,12 +55,12 @@ function wrapHtml({
   ${description ? `<meta name="description" content="${escapeHtml(description)}">` : ""}
   <link rel="preconnect" href="https://rsms.me/">
   <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
-  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="${BASE}/app.css">
   <script>${THEME_INIT_SCRIPT}</script>
 </head>
 <body>
   ${bodyHtml}
-  <script src="/app.js" defer></script>
+  <script src="${BASE}/app.js" defer></script>
   <script>
     // Remove transition-blocker so theme changes animate after load.
     window.addEventListener('load', function () {

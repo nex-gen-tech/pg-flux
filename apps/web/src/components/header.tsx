@@ -3,6 +3,7 @@ import { Logo } from "./logo";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 import { cn } from "@/lib/utils";
+import { BASE } from "@/lib/base";
 
 interface HeaderProps {
   currentPath: string;
@@ -28,7 +29,7 @@ export function Header({ currentPath }: HeaderProps) {
         )}
 
         {/* Brand */}
-        <a href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+        <a href={BASE + "/"} className="flex items-center gap-2 font-semibold tracking-tight">
           <Logo className="text-primary" />
           <span className="text-[15px]">pg-flux</span>
         </a>
@@ -36,7 +37,7 @@ export function Header({ currentPath }: HeaderProps) {
         {/* Primary nav */}
         <nav className="hidden items-center gap-6 text-sm md:flex">
           <a
-            href="/docs/quick-start.html"
+            href={BASE + "/docs/quick-start.html"}
             className={cn(
               "transition-colors hover:text-foreground",
               onDocs ? "text-foreground font-medium" : "text-muted-foreground",
@@ -45,7 +46,7 @@ export function Header({ currentPath }: HeaderProps) {
             Docs
           </a>
           <a
-            href="/docs/cli-overview.html"
+            href={BASE + "/docs/cli-overview.html"}
             className="text-muted-foreground transition-colors hover:text-foreground"
           >
             CLI

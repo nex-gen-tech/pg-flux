@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import { TerminalHero } from "@/components/terminal-hero";
+import { BASE } from "@/lib/base";
 
 export function Landing() {
   return (
@@ -70,7 +71,7 @@ function Hero() {
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Button asChild size="lg">
-              <a href="/docs/quick-start.html">
+              <a href={BASE + "/docs/quick-start.html"}>
                 Quick start
                 <ArrowRight size={16} />
               </a>
@@ -331,13 +332,13 @@ function CTA() {
           </div>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <Button asChild>
-              <a href="/docs/quick-start.html">
+              <a href={BASE + "/docs/quick-start.html"}>
                 Read the quick start
                 <ArrowRight size={16} />
               </a>
             </Button>
             <Button variant="outline" asChild>
-              <a href="/docs/codegen.html">Codegen docs</a>
+              <a href={BASE + "/docs/codegen.html"}>Codegen docs</a>
             </Button>
           </div>
         </div>
