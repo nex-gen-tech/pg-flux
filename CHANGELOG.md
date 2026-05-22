@@ -4,6 +4,10 @@ All notable changes to pg-flux are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.2] — 2026-05-22
+
 ### Added
 
 - **Rust codegen** (`pkg/codegen`): `pg-flux gen --lang rust` generates a complete set of Rust source files backed by `sqlx` and `serde`:
@@ -21,6 +25,17 @@ All notable changes to pg-flux are documented here. Format follows [Keep a Chang
   - **Composite types** → nested `BaseModel` classes (attributes as plain fields).
   - **Domains** → `NewType` wrappers (e.g. `EmailAddress = NewType("EmailAddress", str)`).
   - **Functions** (opt-in via `--functions`) → `TypedDict` subclasses for params (`total=False`) and results; scalar return type aliases.
+
+- **`rust-hrm` example** (`examples/rust-hrm`): multi-tenant HR management app (Actix-web 4 + sqlx 0.8 + pg-flux Rust codegen). The most comprehensive example to date — covers every feature in the four existing examples plus:
+  - `daterange` type: `positions.valid_during`, `leave_requests.during`
+  - `tstzrange` type: `shifts.during`
+  - `pg_trgm` extension + GIN trigram index on a generated column (`full_name gin_trgm_ops`) for fast fuzzy name search
+  - Window function `rank() OVER (PARTITION BY …)` inside a materialized view (`department_stats`)
+  - Two EXCLUDE constraints in the same schema (`positions_no_overlap` on daterange, `shifts_no_overlap` on tstzrange)
+  - Self-referential table with depth tracking (`departments.parent_id`)
+  - Deferrable FK on leave approvals
+  - Full pg-flux Rust codegen output committed to `gen/` (tables · enums · views · types · functions · mod.rs)
+  - Added to CI examples job; passes `migrate apply → drift → verify` cleanly.
 
 ## [0.1.1] — 2026-05-22
 
@@ -111,5 +126,7 @@ The first public release. The point of v0.1 is: "this works against real PG 14-1
 - [shadcn-ui/ui](https://github.com/shadcn-ui/ui) — the component primitives behind the docs site.
 - The PostgreSQL team for building the database we're trying to help you manage.
 
-[Unreleased]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/nex-gen-tech/pg-flux/releases/tag/v0.1.0
