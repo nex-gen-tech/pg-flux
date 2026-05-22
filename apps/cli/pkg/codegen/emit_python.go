@@ -9,8 +9,9 @@ import (
 )
 
 // PythonGenerator emits a single models.py with Pydantic v2 BaseModel classes
-// (one per table) and str+Enum classes (one per PG enum type). It always emits
-// a single-file layout to match Python conventions.
+// (tables, views, composite types), str+Enum classes (PG enums), NewType
+// wrappers (domains), and optional function stubs. Always emits a single-file
+// layout to match Python conventions.
 type PythonGenerator struct {
 	NameOverrides map[string]string
 }
@@ -29,7 +30,7 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 	opts.Emit.normalize()
 	s = opts.Emit.Filter.ApplyToState(s)
 
-	// Build the custom-type map so the typemap can resolve enum column refs.
+	// Build the custom-type map so the typemap can resolve enum/composite/domain refs.
 	ptm := g.buildTypeMap(s, opts)
 
 	var b strings.Builder
@@ -39,7 +40,7 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 	// Collect which imports are actually needed.
 	needed := newImportSet()
 
-	// --- Emit enums first (tables may reference them) ---
+	// ---- 1. Enums (str, Enum) — referenced by tables/views ----
 	var enumBuf strings.Builder
 	for _, k := range SortedKeys(s.EnumValues) {
 		values := s.EnumValues[k]
@@ -50,7 +51,7 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 		} else {
 			schName, name = "public", parts[0]
 		}
-		className := g.typeName(schName, name)
+		className := g.enumTypeName(schName, name)
 		needed.add("Enum")
 		fmt.Fprintf(&enumBuf, "\nclass %s(str, Enum):\n", className)
 		for _, v := range values {
@@ -60,7 +61,7 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 		enumBuf.WriteString("\n")
 	}
 
-	// --- Emit table models ---
+	// ---- 2. Table models (BaseModel) ----
 	var tableBuf strings.Builder
 	for _, k := range SortedKeys(s.Tables) {
 		t := s.Tables[k]
@@ -69,7 +70,12 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 		}
 		className := g.typeName(t.Schema, t.Name)
 		needed.add("BaseModel")
-		fmt.Fprintf(&tableBuf, "\nclass %s(BaseModel):\n", className)
+		if t.Comment != "" {
+			fmt.Fprintf(&tableBuf, "\nclass %s(BaseModel):\n", className)
+			fmt.Fprintf(&tableBuf, "    \"\"\"%s\"\"\"\n", t.Comment)
+		} else {
+			fmt.Fprintf(&tableBuf, "\nclass %s(BaseModel):\n", className)
+		}
 		if len(t.Columns) == 0 {
 			tableBuf.WriteString("    pass\n\n")
 			continue
@@ -78,48 +84,142 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 			if c == nil {
 				continue
 			}
-			isNullable := !c.NotNull
-			isGenerated := c.GeneratedKind == "stored" || c.GeneratedKind == "virtual"
-			hasDefault := c.DefaultSQL != "" || c.Identity != ""
-
-			typeExpr, imps := ptm.Map(c.TypeSQL, isNullable || isGenerated)
-			for _, imp := range imps {
-				needed.add(imp)
-			}
-
-			var fieldParts strings.Builder
-			fmt.Fprintf(&fieldParts, "    %s: %s", c.Name, typeExpr)
-
-			// Determine whether to add a default value.
-			switch {
-			case isGenerated:
-				// Server-computed: always Optional with None default.
-				fieldParts.WriteString(" = None  # server-computed")
-			case isNullable:
-				// Nullable: default to None.
-				fieldParts.WriteString(" = None")
-			case hasDefault:
-				// Has a database default but NOT NULL: emit = None so callers
-				// can omit the field in INSERT payloads; the DB fills it in.
-				// Re-wrap the type to Optional to allow the Python-side None.
-				if !strings.HasPrefix(typeExpr, "Optional[") {
-					needed.add("Optional")
-					typeExpr = "Optional[" + typeExpr + "]"
-					// Rewrite the field line.
-					fieldParts.Reset()
-					fmt.Fprintf(&fieldParts, "    %s: %s = None", c.Name, typeExpr)
-				} else {
-					fieldParts.WriteString(" = None")
-				}
-			}
-
-			tableBuf.WriteString(fieldParts.String())
-			tableBuf.WriteString("\n")
+			emitPythonField(&tableBuf, ptm, needed, c.Name, c.TypeSQL, !c.NotNull,
+				c.GeneratedKind == "stored" || c.GeneratedKind == "virtual",
+				c.DefaultSQL != "" || c.Identity != "")
 		}
 		tableBuf.WriteString("\n")
 	}
 
-	// --- Build the import block ---
+	// ---- 3. View models (read-only BaseModel) ----
+	var viewBuf strings.Builder
+	for _, k := range SortedKeys(s.Views) {
+		v := s.Views[k]
+		if v == nil {
+			continue
+		}
+		className := g.typeName(v.Schema, v.Name)
+		needed.add("BaseModel")
+		kw := "view"
+		if v.Materialized {
+			kw = "materialized view"
+		}
+		comment := v.Comment
+		if comment == "" {
+			comment = fmt.Sprintf("Read-only row from %s %s.%s.", kw, v.Schema, v.Name)
+		}
+		fmt.Fprintf(&viewBuf, "\nclass %s(BaseModel):\n", className)
+		fmt.Fprintf(&viewBuf, "    \"\"\"%s\"\"\"\n", comment)
+		if len(v.Columns) == 0 {
+			viewBuf.WriteString("    pass\n\n")
+			continue
+		}
+		for _, c := range v.Columns {
+			if c == nil {
+				continue
+			}
+			// View columns are always nullable.
+			emitPythonField(&viewBuf, ptm, needed, c.Name, c.TypeSQL, true, false, false)
+		}
+		viewBuf.WriteString("\n")
+	}
+
+	// ---- 4. Composite types (nested BaseModel) ----
+	var compositeBuf strings.Builder
+	for _, k := range SortedKeys(s.CompositeTypes) {
+		ct := s.CompositeTypes[k]
+		if ct == nil {
+			continue
+		}
+		className := g.typeName(ct.Schema, ct.Name)
+		needed.add("BaseModel")
+		comment := ct.Comment
+		if comment == "" {
+			comment = fmt.Sprintf("Mirrors composite type %s.%s.", ct.Schema, ct.Name)
+		}
+		fmt.Fprintf(&compositeBuf, "\nclass %s(BaseModel):\n", className)
+		fmt.Fprintf(&compositeBuf, "    \"\"\"%s\"\"\"\n", comment)
+		if len(ct.Attributes) == 0 {
+			compositeBuf.WriteString("    pass\n\n")
+			continue
+		}
+		for _, a := range ct.Attributes {
+			emitPythonField(&compositeBuf, ptm, needed, a.Name, a.Type, false, false, false)
+		}
+		compositeBuf.WriteString("\n")
+	}
+
+	// ---- 5. Domains (NewType wrappers) ----
+	var domainBuf strings.Builder
+	for _, k := range SortedKeys(s.Domains) {
+		d := s.Domains[k]
+		if d == nil {
+			continue
+		}
+		typeName := g.typeName(d.Schema, d.Name)
+		baseExpr, imps := ptm.Map(d.BaseType, false)
+		for _, imp := range imps {
+			needed.add(imp)
+		}
+		needed.add("NewType")
+		fmt.Fprintf(&domainBuf, "\n# %s mirrors domain %s.%s over %s.\n", typeName, d.Schema, d.Name, d.BaseType)
+		fmt.Fprintf(&domainBuf, "%s = NewType(%q, %s)\n", typeName, typeName, baseExpr)
+	}
+
+	// ---- 6. Function stubs (opt-in) ----
+	var fnBuf strings.Builder
+	if opts.Emit.Functions && len(s.Functions) > 0 {
+		for _, k := range SortedKeys(s.Functions) {
+			f := s.Functions[k]
+			if !shouldEmitFn(f) {
+				continue
+			}
+			fnName := fnTypeName(f, g.NameOverrides)
+
+			if len(f.Args) > 0 {
+				needed.add("TypedDict")
+				fmt.Fprintf(&fnBuf, "\nclass %sParams(TypedDict, total=False):\n", fnName)
+				fmt.Fprintf(&fnBuf, "    \"\"\"Input parameters for %s.%s.\"\"\"\n", f.Schema, f.Name)
+				for i, a := range f.Args {
+					name := paramName(a, i)
+					typeExpr, imps := ptm.Map(a.Type, false)
+					for _, imp := range imps {
+						needed.add(imp)
+					}
+					fmt.Fprintf(&fnBuf, "    %s: %s\n", name, typeExpr)
+				}
+				fnBuf.WriteString("\n")
+			}
+
+			if f.Kind == "p" {
+				continue
+			}
+
+			if len(f.ReturnsTable) > 0 {
+				needed.add("TypedDict")
+				fmt.Fprintf(&fnBuf, "\nclass %sResult(TypedDict):\n", fnName)
+				fmt.Fprintf(&fnBuf, "    \"\"\"One row returned by %s.%s.\"\"\"\n", f.Schema, f.Name)
+				for _, a := range f.ReturnsTable {
+					name := paramName(a, 0)
+					typeExpr, imps := ptm.Map(a.Type, false)
+					for _, imp := range imps {
+						needed.add(imp)
+					}
+					fmt.Fprintf(&fnBuf, "    %s: %s\n", name, typeExpr)
+				}
+				fnBuf.WriteString("\n")
+			} else if f.ReturnType != "" && !isVoidLike(f.ReturnType) {
+				typeExpr, imps := ptm.Map(f.ReturnType, false)
+				for _, imp := range imps {
+					needed.add(imp)
+				}
+				fmt.Fprintf(&fnBuf, "\n# %sRow is the scalar value returned by %s.%s.\n", fnName, f.Schema, f.Name)
+				fmt.Fprintf(&fnBuf, "%sRow = %s\n", fnName, typeExpr)
+			}
+		}
+	}
+
+	// ---- Build the import block ----
 	b.WriteString("from __future__ import annotations\n")
 	if needed.has("datetime") {
 		b.WriteString("from datetime import datetime\n")
@@ -130,14 +230,14 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 	if needed.has("Enum") {
 		b.WriteString("from enum import Enum\n")
 	}
-	if needed.has("Optional") || needed.has("Any") {
-		var typingSymbols []string
-		if needed.has("Optional") {
-			typingSymbols = append(typingSymbols, "Optional")
+	// Collect typing symbols in alphabetical order.
+	var typingSymbols []string
+	for _, sym := range []string{"Any", "NewType", "Optional", "TypedDict"} {
+		if needed.has(sym) {
+			typingSymbols = append(typingSymbols, sym)
 		}
-		if needed.has("Any") {
-			typingSymbols = append(typingSymbols, "Any")
-		}
+	}
+	if len(typingSymbols) > 0 {
 		sort.Strings(typingSymbols)
 		fmt.Fprintf(&b, "from typing import %s\n", strings.Join(typingSymbols, ", "))
 	}
@@ -150,14 +250,59 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 
 	b.WriteString(enumBuf.String())
 	b.WriteString(tableBuf.String())
+	b.WriteString(viewBuf.String())
+	b.WriteString(compositeBuf.String())
+	if domainBuf.Len() > 0 {
+		b.WriteString("\n")
+		b.WriteString(domainBuf.String())
+	}
+	if fnBuf.Len() > 0 {
+		b.WriteString(fnBuf.String())
+	}
 
 	content := trimTrailingBlankLines(b.String())
 	return FileSet{"models.py": []byte(content)}, nil
 }
 
+// emitPythonField writes a single typed field line into buf, tracking needed imports.
+func emitPythonField(
+	buf *strings.Builder,
+	ptm *PythonTypeMap,
+	needed *importSet,
+	colName, pgType string,
+	nullable, isGenerated, hasDefault bool,
+) {
+	typeExpr, imps := ptm.Map(pgType, nullable || isGenerated)
+	for _, imp := range imps {
+		needed.add(imp)
+	}
+
+	var fieldParts strings.Builder
+	fmt.Fprintf(&fieldParts, "    %s: %s", colName, typeExpr)
+
+	switch {
+	case isGenerated:
+		fieldParts.WriteString(" = None  # server-computed")
+	case nullable:
+		fieldParts.WriteString(" = None")
+	case hasDefault:
+		// Has a DB default but NOT NULL: Optional[T] = None so callers
+		// can omit it on the Python side and let the DB fill it.
+		if !strings.HasPrefix(typeExpr, "Optional[") {
+			needed.add("Optional")
+			retyped := "Optional[" + typeExpr + "]"
+			fieldParts.Reset()
+			fmt.Fprintf(&fieldParts, "    %s: %s = None", colName, retyped)
+		} else {
+			fieldParts.WriteString(" = None")
+		}
+	}
+
+	buf.WriteString(fieldParts.String())
+	buf.WriteString("\n")
+}
+
 // typeName converts a PG schema+name pair to a Python CamelCase class name.
-// It applies the user's NameOverrides first, then PascalCase (no Singular —
-// Python classes for tables are typically plural or match the table name).
 func (g *PythonGenerator) typeName(schName, objName string) string {
 	full := schName + "." + objName
 	if g.NameOverrides != nil {
@@ -171,7 +316,21 @@ func (g *PythonGenerator) typeName(schName, objName string) string {
 	return PascalCase(objName)
 }
 
-// buildTypeMap constructs the PythonTypeMap wired to custom enum types.
+// enumTypeName returns the class name for a PG enum — no singularization.
+func (g *PythonGenerator) enumTypeName(schName, objName string) string {
+	full := schName + "." + objName
+	if g.NameOverrides != nil {
+		if v, ok := g.NameOverrides[full]; ok {
+			return v
+		}
+		if v, ok := g.NameOverrides[objName]; ok {
+			return v
+		}
+	}
+	return PascalCase(objName)
+}
+
+// buildTypeMap constructs the PythonTypeMap wired to custom enum/composite/domain types.
 func (g *PythonGenerator) buildTypeMap(s *schema.SchemaState, opts Options) *PythonTypeMap {
 	var ptm *PythonTypeMap
 	if opts.TypeMap != nil {
@@ -192,6 +351,7 @@ func (g *PythonGenerator) collectCustomTypes(s *schema.SchemaState) map[string]s
 		return nil
 	}
 	out := map[string]string{}
+	// Enums.
 	for k := range s.EnumValues {
 		parts := strings.SplitN(k, ".", 2)
 		var sch, n string
@@ -200,9 +360,27 @@ func (g *PythonGenerator) collectCustomTypes(s *schema.SchemaState) map[string]s
 		} else {
 			sch, n = "public", parts[0]
 		}
-		ident := g.typeName(sch, n)
+		ident := g.enumTypeName(sch, n)
 		out[k] = ident
 		out[n] = ident
+	}
+	// Composite types.
+	for k, ct := range s.CompositeTypes {
+		if ct == nil {
+			continue
+		}
+		ident := g.typeName(ct.Schema, ct.Name)
+		out[k] = ident
+		out[ct.Name] = ident
+	}
+	// Domains.
+	for k, d := range s.Domains {
+		if d == nil {
+			continue
+		}
+		ident := g.typeName(d.Schema, d.Name)
+		out[k] = ident
+		out[d.Name] = ident
 	}
 	return out
 }

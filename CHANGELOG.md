@@ -4,7 +4,23 @@ All notable changes to pg-flux are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Rust codegen** (`pkg/codegen`): `pg-flux gen --lang rust` generates a complete set of Rust source files backed by `sqlx` and `serde`:
+  - `tables.rs` — `pub struct` per table with `#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]`; nullable columns use `Option<T>`; identity/generated columns marked readonly.
+  - `enums.rs` — `pub enum` per PG enum with `#[derive(… sqlx::Type)]`, `#[sqlx(type_name = "…")]` and per-variant `#[sqlx(rename)]` / `#[serde(rename)]` annotations — handles hyphens and any PG value format.
+  - `views.rs` — read-only `sqlx::FromRow` structs for views and materialized views; all columns `Option<T>`.
+  - `types.rs` — composite types as plain `Serialize`/`Deserialize` structs; domains as newtype structs (`pub struct EmailAddress(pub String)`).
+  - `functions.rs` (opt-in via `--functions`) — `*Params`, `*Result`, and scalar `type *Row = …` for user-defined functions and procedures.
+  - `mod.rs` — barrel file re-exporting all emitted modules.
+  - Fully-qualified type paths (`uuid::Uuid`, `chrono::DateTime<chrono::Utc>`, `serde_json::Value`) — no extra `use` declarations required in generated files.
+  - Type overrides via `type_overrides` in config (e.g. map `numeric` → `rust_decimal::Decimal`).
+
+- **Python codegen parity** (`pkg/codegen`): `pg-flux gen --lang python` now matches Go/TypeScript coverage:
+  - **Views** → read-only `BaseModel` classes with docstring and all columns `Optional[T]`.
+  - **Composite types** → nested `BaseModel` classes (attributes as plain fields).
+  - **Domains** → `NewType` wrappers (e.g. `EmailAddress = NewType("EmailAddress", str)`).
+  - **Functions** (opt-in via `--functions`) → `TypedDict` subclasses for params (`total=False`) and results; scalar return type aliases.
 
 ## [0.1.1] — 2026-05-22
 

@@ -41,6 +41,7 @@ const (
 	LangGo         Language = "go"
 	LangTypeScript Language = "ts"
 	LangPython     Language = "python"
+	LangRust       Language = "rust"
 )
 
 // Generator is the per-language code emitter. Each language implementation

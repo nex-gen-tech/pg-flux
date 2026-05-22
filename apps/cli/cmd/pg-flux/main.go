@@ -729,8 +729,14 @@ func makeGenerator(o codegen.OutputConfig) (codegen.Generator, error) {
 			g.NameOverrides = o.NameOverrides
 		}
 		return g, nil
+	case codegen.LangRust:
+		g := codegen.NewRustGenerator()
+		if len(o.NameOverrides) > 0 {
+			g.NameOverrides = o.NameOverrides
+		}
+		return g, nil
 	}
-	return nil, fmt.Errorf("unsupported language %q (supported: go, ts, python)", o.Lang)
+	return nil, fmt.Errorf("unsupported language %q (supported: go, ts, python, rust)", o.Lang)
 }
 
 func makeTypeMap(o codegen.OutputConfig) codegen.TypeMap {
@@ -741,6 +747,8 @@ func makeTypeMap(o codegen.OutputConfig) codegen.TypeMap {
 		return &codegen.TSTypeMap{Overrides: o.TypeOverrides}
 	case codegen.LangPython:
 		return &codegen.PythonTypeMap{Overrides: o.TypeOverrides}
+	case codegen.LangRust:
+		return &codegen.RustTypeMap{Overrides: o.TypeOverrides}
 	}
 	return nil
 }
