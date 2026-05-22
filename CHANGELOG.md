@@ -6,6 +6,30 @@ All notable changes to pg-flux are documented here. Format follows [Keep a Chang
 
 Nothing yet.
 
+## [0.1.1] — 2026-05-22
+
+Bug-fix release. All six correctness gaps discovered during the go-shop end-to-end build are resolved. Every example (fastapi-todo, express-bookmarks, go-events, go-shop) now exits 0 on both `drift` and `verify` with no workarounds.
+
+### Fixed
+
+- **B1 — FK to partitioned table generates ghost constraints** (`pkg/inspector`): PostgreSQL auto-creates per-partition FK clones (`conparentid != 0`). The inspector now filters these out with `AND c.conparentid = 0`, so they no longer appear as undeclared constraints in `drift` output.
+- **B2 — Stored procedure re-emitted on every `migrate generate`** (`pkg/differ`): `pg_get_functiondef()` returns `IN param_name type` but source files omit the `IN` mode keyword. Added `reParamModeIn` regex to strip `IN ` prefix before fingerprinting procedure headers.
+- **B3 — `CREATE SCHEMA` re-emitted on every drift/generate run** (`pkg/schema`, `pkg/inspector`, `pkg/differ`): pg-flux now tracks `CREATE SCHEMA` as a first-class object. The inspector reads live schemas from `pg_namespace`; the differ suppresses `CREATE SCHEMA IF NOT EXISTS` emission when the schema already exists.
+- **B4 — Inline unnamed column CHECK constraints silently dropped** (`pkg/src`): The source parser now captures inline column-level `CHECK` constraints and auto-generates names following PostgreSQL's `<table>_<col>_check` convention.
+- **B5 — `GRANT … TO PUBLIC` never emitted in migrations** (`pkg/src`, `pkg/differ`): `grants.sql` sorts alphabetically before table/view schema files. When processed on first pass, grant targets didn't exist yet and grants were silently discarded. Fixed with a `PendingGrants` second-pass in `LoadDesiredState`, matching the existing `PendingRLS`/`PendingAlterPolicy` patterns.
+- **B6 — Enum cast in partial index predicate causes perpetual drift** (`pkg/differ`): PostgreSQL stores `WHERE status = 'active'::product_status` while source has `WHERE status = 'active'`. Added `stripUserDefinedCasts()` that removes `::user_defined_type` from index predicates before comparing, preserving numeric/binary built-in type casts.
+
+### Added
+
+- **Python codegen** (`pkg/codegen`): `pg-flux gen --lang python` generates `models.py` with Pydantic v2 `BaseModel` classes and `str, Enum` enums. Nullable columns emit `Optional[T] = None`; generated columns emit `Optional[T] = None  # server-computed`.
+- **`pg-flux migrate rehash`** (`pkg/migrate`): Accepts a manually edited migration file by writing a SHA-256 content-hash into the `pg-flux-baseline-hash` header. Subsequent `migrate apply` recognises the content-hash and skips the live-DB drift check.
+- **`pg-flux init` no-overwrite** (`cmd`): `init` now skips writing sample schema files that already exist and prints `skipped schema/users.sql (already exists)`.
+- **Codegen singularizer exception list** (`pkg/codegen`): 24-word exception list prevents the singularizer mangling common English words ending in `-us`, `-ss`, `-as`, `-is` (e.g. `event_status` no longer becomes `EventStatu`).
+- **go-events example** (`examples/go-events`): Go + chi multi-tenant event management — `GENERATED ALWAYS AS IDENTITY`, deferrable FK, materialized view, `text[]` GIN index, 15 migrations.
+- **go-shop example** (`examples/go-shop`): Comprehensive Go + chi e-commerce app — 2 schemas, 3-partition partitioned table, EXCLUDE constraint, BRIN/INCLUDE indexes, SECURITY DEFINER, stored procedure, RLS, domains, composite type, 58-statement clean migration.
+- **GitHub Pages docs site** (`apps/web`): Live at [nex-gen-tech.github.io/pg-flux](https://nex-gen-tech.github.io/pg-flux/). Auto-deploys on push to `main`.
+- **Examples CI** (`.github/workflows`): All four examples replay end-to-end (apply → drift → verify) as regression gates in CI.
+
 ## [0.1.0] — 2026-05-21
 
 The first public release. The point of v0.1 is: "this works against real PG 14-18 schemas, and we have tests to prove it." The point of v1.0 will be: "we promise not to break you."
