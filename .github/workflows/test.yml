@@ -58,7 +58,7 @@ jobs:
     #   apply all migrations  →  drift (must be clean)  →  verify (must be clean).
     # This catches drift/verify regressions on real user-shaped schemas — the
     # test shape the matrix doesn't cover.
-    name: examples — all three examples end-to-end
+    name: examples — all five examples end-to-end
     runs-on: ubuntu-latest
     needs: unit
     services:
@@ -164,6 +164,27 @@ jobs:
           psql -h localhost -p 5432 -U pgflux -d pgflux -c "DROP DATABASE IF EXISTS pgflux_go_shop;"
           psql -h localhost -p 5432 -U pgflux -d pgflux -c "CREATE DATABASE pgflux_go_shop;"
           psql -h localhost -p 5432 -U pgflux pgflux_go_shop -c "CREATE SCHEMA IF NOT EXISTS audit;"
+
+          echo "--- apply migrations ---"
+          "$BIN" migrate apply
+
+          echo "--- drift (must be clean) ---"
+          "$BIN" drift
+
+          echo "--- verify (must be clean) ---"
+          "$BIN" verify
+
+      - name: replay rust-hrm example
+        working-directory: examples/rust-hrm
+        env:
+          BIN: ${{ github.workspace }}/apps/cli/pg-flux
+          DATABASE_URL: postgres://pgflux:pgflux@localhost:5432/pgflux_rust_hrm?sslmode=disable
+          PGPASSWORD: pgflux
+        run: |
+          set -eu
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "DROP DATABASE IF EXISTS pgflux_rust_hrm;"
+          psql -h localhost -p 5432 -U pgflux -d pgflux -c "CREATE DATABASE pgflux_rust_hrm;"
+          psql -h localhost -p 5432 -U pgflux pgflux_rust_hrm -c "CREATE SCHEMA IF NOT EXISTS audit;"
 
           echo "--- apply migrations ---"
           "$BIN" migrate apply

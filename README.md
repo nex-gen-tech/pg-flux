@@ -143,6 +143,7 @@ Four real-world apps in [`examples/`](./examples/):
 | [`express-bookmarks`](./examples/express-bookmarks/) | TypeScript + Express + node-postgres | JSONB, tsvector, GIN indexes, DB-side trigger |
 | [`go-events`](./examples/go-events/) | Go + chi + pgx/v5 | IDENTITY columns, materialized view, deferrable FK, `text[]` GIN |
 | [`go-shop`](./examples/go-shop/) | Go + chi + pgx/v5 | 2 schemas, partitioned table, EXCLUDE, BRIN, INCLUDE, domains, composite type, SECURITY DEFINER, stored procedure, grants |
+| [`rust-hrm`](./examples/rust-hrm/) | Rust + Actix-web + sqlx | Everything in go-shop + `daterange`, `tstzrange`, `pg_trgm` trigram GIN, window function in matview, multiple EXCLUDE constraints, self-referential table, Rust codegen |
 
 Every example passes `pg-flux drift` and `pg-flux verify` cleanly and runs end-to-end in CI.
 
