@@ -38,11 +38,23 @@ jobs:
           - os_name: linux
             arch: arm64
             runner: ubuntu-24.04-arm
+          - os_name: windows
+            arch: amd64
+            runner: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            binary: pg-flux.exe
+          - os_name: windows
+            arch: arm64
+            runner: ubuntu-latest
+            goos: windows
+            goarch: arm64
+            binary: pg-flux.exe
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
           go-version-file: apps/cli/go.mod
           cache: true
@@ -62,11 +74,12 @@ jobs:
         working-directory: apps/cli
         env:
           CGO_ENABLED: 1
-          GOOS: ${{ matrix.os_name }}
-          GOARCH: ${{ matrix.arch }}
+          GOOS: ${{ matrix.goos || matrix.os_name }}
+          GOARCH: ${{ matrix.goarch || matrix.arch }}
         run: |
           mkdir -p ../../dist
-          OUT="../../dist/pg-flux-${{ matrix.os_name }}-${{ matrix.arch }}"
+          BINARY="${{ matrix.binary || 'pg-flux' }}"
+          OUT="../../dist/$BINARY"
 
           # If the matrix entry asks for an arch-specific CC, wrap clang so cgo
           # passes "-arch <arch>" to every C compile + link invocation. Apple's
@@ -91,9 +104,8 @@ jobs:
 
           file "$OUT" || true
 
-          # Native runs only — cross-compiled darwin-amd64 won't execute on
-          # arm64, so we can't verify with `version` here.
-          if [ -z "${{ matrix.cc_arch }}" ]; then
+          # Native runs only — cross-compiled binaries can't execute on the runner.
+          if [ -z "${{ matrix.cc_arch }}" ] && [ "${{ matrix.os_name }}" != "windows" ]; then
             "$OUT" version || true
           fi
 
@@ -102,16 +114,21 @@ jobs:
         working-directory: dist
         run: |
           NAME="pg-flux-${{ matrix.os_name }}-${{ matrix.arch }}"
-          mv "$NAME" pg-flux
-          tar -czf "$NAME.tar.gz" pg-flux
-          rm pg-flux
+          if [[ "${{ matrix.os_name }}" == "windows"* ]]; then
+            zip "$NAME.zip" pg-flux.exe
+          else
+            tar -czf "$NAME.tar.gz" pg-flux
+            rm pg-flux
+          fi
           ls -la
 
       - name: upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68cf7e19c7b48bb5a4dfaf4 # v4.6.2
         with:
           name: pg-flux-${{ matrix.os_name }}-${{ matrix.arch }}
-          path: dist/pg-flux-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz
+          path: |
+            dist/pg-flux-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz
+            dist/pg-flux-${{ matrix.os_name }}-${{ matrix.arch }}.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -120,7 +137,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: resolve tag
         id: tag
@@ -132,7 +149,7 @@ jobs:
           fi
 
       - name: download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@cc203385981b7b7de4f5a7d4fd59f05d8571b83e # v4.2.1
         with:
           path: dist
           merge-multiple: true
@@ -141,7 +158,7 @@ jobs:
         working-directory: dist
         run: |
           ls -la
-          sha256sum *.tar.gz > SHA256SUMS
+          sha256sum *.tar.gz *.zip 2>/dev/null > SHA256SUMS || sha256sum *.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: extract changelog entry
@@ -167,17 +184,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
+          ASSETS=$(ls dist/*.tar.gz dist/*.zip 2>/dev/null; echo dist/SHA256SUMS)
           # Idempotent: if a release for the tag already exists, just upload to it.
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release $TAG exists — uploading assets."
             gh release upload "$TAG" \
               --repo "${{ github.repository }}" \
               --clobber \
-              dist/*.tar.gz dist/SHA256SUMS
+              $ASSETS
           else
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "pg-flux $TAG" \
               --notes-file "${{ steps.changelog.outputs.notes_file }}" \
-              dist/*.tar.gz dist/SHA256SUMS
+              $ASSETS
           fi

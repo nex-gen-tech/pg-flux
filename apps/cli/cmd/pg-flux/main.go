@@ -36,6 +36,17 @@ import (
 // Version is the build-time version string (set via -ldflags).
 var Version = "dev"
 
+// Exit codes used by pg-flux commands.
+// These are stable: scripts and CI pipelines may test $? against them.
+const (
+	exitOK            = 0 // success
+	exitErr           = 1 // generic / unexpected error
+	exitDrift         = 2 // drift detected (drift --strict)
+	exitStaleGen      = 3 // generated files stale (gen --check)
+	exitUndeclared    = 4 // undeclared objects (verify --strict)
+	exitHazardBlocked = 5 // hazard blocked apply
+)
+
 var (
 	globalFormat     string
 	dbURL            string
@@ -70,7 +81,19 @@ type pgfluxConfig struct {
 	TrackingSchema string   `yaml:"tracking_schema"`
 }
 
+// knownConfigKeys is the set of valid top-level keys in .pg-flux.yml.
+// Any key present in the file that is NOT in this set triggers a warning.
+var knownConfigKeys = []string{
+	"version",
+	"db",
+	"schema_dir",
+	"target_schemas",
+	"migrations_dir",
+	"tracking_schema",
+}
+
 // loadConfig reads a .pg-flux.yml config file. Missing file is not an error.
+// Unknown keys emit a warning to stderr with a "did you mean?" suggestion.
 func loadConfig(path string) (*pgfluxConfig, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -79,6 +102,19 @@ func loadConfig(path string) (*pgfluxConfig, error) {
 		}
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
+
+	// First pass: unmarshal into a raw map to detect unknown keys.
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(b, &raw); err == nil {
+		for key := range raw {
+			if !isKnownConfigKey(key) {
+				suggestion := closestConfigKey(key)
+				fmt.Fprintf(os.Stderr, "warning: unknown config key %q in %s — did you mean %q?\n", key, path, suggestion)
+			}
+		}
+	}
+
+	// Second pass: unmarshal into the typed struct.
 	var c pgfluxConfig
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
@@ -86,26 +122,125 @@ func loadConfig(path string) (*pgfluxConfig, error) {
 	return &c, nil
 }
 
-// errDriftDetected is a sentinel returned by cmdDrift when schema differs from desired state.
-// main() translates this to exit code 1 without printing a redundant message.
-var errDriftDetected = errors.New("drift: schema has changed")
+// isKnownConfigKey returns true if key is a valid .pg-flux.yml key.
+func isKnownConfigKey(key string) bool {
+	for _, k := range knownConfigKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// closestConfigKey returns the known config key with the smallest Levenshtein
+// distance to the given unknown key. Returns the first known key when all
+// distances are equal (i.e. no useful suggestion exists).
+func closestConfigKey(unknown string) string {
+	best := knownConfigKeys[0]
+	bestDist := levenshtein(unknown, best)
+	for _, k := range knownConfigKeys[1:] {
+		if d := levenshtein(unknown, k); d < bestDist {
+			bestDist = d
+			best = k
+		}
+	}
+	return best
+}
+
+// levenshtein computes the edit distance between two strings.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	la, lb := len(ra), len(rb)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	// Use two rows to keep memory O(min(la,lb)).
+	row := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		row[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		prev := row[0]
+		row[0] = i
+		for j := 1; j <= lb; j++ {
+			tmp := row[j]
+			if ra[i-1] == rb[j-1] {
+				row[j] = prev
+			} else {
+				row[j] = 1 + min3(prev, row[j], row[j-1])
+			}
+			prev = tmp
+		}
+	}
+	return row[lb]
+}
+
+// min3 returns the minimum of three ints.
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
+// Sentinel errors returned by commands to signal specific exit codes.
+// main() maps each sentinel to its exit code without printing a redundant message.
+var (
+	// errDriftDetected is returned by cmdDrift when schema differs from desired state.
+	errDriftDetected = errors.New("drift: schema has changed")
+	// errStaleGen is returned by cmdGen --check when on-disk files are stale.
+	errStaleGen = errors.New("gen --check: on-disk generated files are stale; run `pg-flux gen` to refresh")
+	// errUndeclared is returned by cmdVerify --strict when undeclared objects are found.
+	errUndeclared = errors.New("verify: undeclared objects found")
+	// errHazardBlocked is returned when a hazard blocks apply.
+	errHazardBlocked = errors.New("apply: blocked by hazards")
+)
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
-		// cobra prints the error message itself ("Error: ...") for any command
-		// without SilenceErrors=true. We MUST NOT also print here — that
-		// produced a double-printed stack of the same error.
-		// SilenceUsage is set on every command so the flags block is suppressed;
-		// SilenceErrors stays false everywhere except cmdDrift, which uses the
-		// errDriftDetected sentinel to exit 1 quietly.
-		os.Exit(1)
+		// cobra prints the error message itself ("Error: ...") for most commands.
+		// Sentinel errors are handled quietly here with specific exit codes.
+		switch {
+		case errors.Is(err, errDriftDetected):
+			os.Exit(exitDrift)
+		case errors.Is(err, errStaleGen):
+			os.Exit(exitStaleGen)
+		case errors.Is(err, errUndeclared):
+			os.Exit(exitUndeclared)
+		case errors.Is(err, errHazardBlocked):
+			os.Exit(exitHazardBlocked)
+		default:
+			os.Exit(exitErr)
+		}
 	}
+	os.Exit(exitOK)
 }
 
 func newRoot() *cobra.Command {
 	r := &cobra.Command{
-		Use:          "pg-flux",
-		Short:        "Declarative PostgreSQL schema migration",
+		Use:   "pg-flux",
+		Short: "Declarative PostgreSQL schema migration",
+		Long: `pg-flux — declarative PostgreSQL schema migration tool.
+
+Manage your database schema by declaring the desired state in .sql files.
+pg-flux diffs, plans, and applies changes safely.
+
+Exit codes:
+  0  success
+  1  generic / unexpected error
+  2  drift detected  (drift command when schema has drifted)
+  3  generated files stale  (gen --check when on-disk files are outdated)
+  4  undeclared objects found  (verify --strict)
+  5  apply blocked by hazards  (apply when blocking hazards are unmitigated)`,
 		SilenceUsage: true, // don't dump the flags block on every error; cobra still prints usage on unknown commands
 	}
 	r.PersistentFlags().StringVar(&globalFormat, "format", "human", "human or json")
@@ -399,12 +534,13 @@ func cmdDump() *cobra.Command {
 
 // cmdVerify is the read-only inverse of dump: list catalog objects that exist
 // in the live DB but are not declared in source. Exits 0 by default; --strict
-// makes it exit 1 when anything is found (suitable as a CI gate).
+// makes it exit 4 when anything is found (suitable as a CI gate).
 func cmdVerify() *cobra.Command {
 	var strict bool
 	c := &cobra.Command{
-		Use:   "verify",
-		Short: "List live objects not declared in source (audit gate)",
+		Use:          "verify",
+		Short:        "List live objects not declared in source (audit gate)",
+		SilenceErrors: true, // main() handles errUndeclared with exit code 4
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -424,12 +560,13 @@ func cmdVerify() *cobra.Command {
 			report := dump.Verify(des, live)
 			report.WriteText(cmd.OutOrStdout())
 			if strict && report.Count() > 0 {
-				return fmt.Errorf("verify: %d undeclared object(s)", report.Count())
+				fmt.Fprintf(cmd.ErrOrStderr(), "verify: %d undeclared object(s)\n", report.Count())
+				return errUndeclared
 			}
 			return nil
 		},
 	}
-	c.Flags().BoolVar(&strict, "strict", false, "exit 1 when any undeclared live object is found")
+	c.Flags().BoolVar(&strict, "strict", false, "exit 4 when any undeclared live object is found")
 	return c
 }
 
@@ -509,8 +646,9 @@ func cmdGen() *cobra.Command {
 		flagFunctions  bool
 	)
 	c := &cobra.Command{
-		Use:   "gen",
-		Short: "Generate Go / TypeScript type definitions from the schema",
+		Use:          "gen",
+		Short:        "Generate Go / TypeScript type definitions from the schema",
+		SilenceErrors: true, // main() handles errStaleGen with exit code 3
 		Long: "Reads the pg-flux schema model (live DB or source files) and emits\n" +
 			"application-language types so app code stays in sync after every migration.\n" +
 			"Use --check in CI to fail the build when on-disk generated files are stale.\n\n" +
@@ -651,7 +789,7 @@ func cmdGen() *cobra.Command {
 				codegen.WriteSummary(cmd.OutOrStdout(), o.Lang, written, skipped, nil)
 			}
 			if check && anyDiff {
-				return fmt.Errorf("gen --check: on-disk generated files are stale; run `pg-flux gen` to refresh")
+				return errStaleGen
 			}
 			return nil
 		},
@@ -660,7 +798,7 @@ func cmdGen() *cobra.Command {
 	c.Flags().StringVar(&outDir, "out", "", "output directory (single-language mode; default ./internal/dbgen)")
 	c.Flags().StringVar(&pkgName, "package", "", "Go package name (default: dbgen)")
 	c.Flags().BoolVar(&fromSource, "from-source", false, "generate from schema files instead of the live DB")
-	c.Flags().BoolVar(&check, "check", false, "exit 1 if on-disk generated files differ from what would be emitted")
+	c.Flags().BoolVar(&check, "check", false, "exit 3 if on-disk generated files differ from what would be emitted")
 	c.Flags().StringVar(&configFile, "codegen-config", ".pg-flux-codegen.yml", "path to codegen config file")
 
 	// Emit-option flags.
@@ -756,6 +894,7 @@ func makeTypeMap(o codegen.OutputConfig) codegen.TypeMap {
 func cmdMigrateGenerate() *cobra.Command {
 	var label string
 	var generateUndo bool
+	var dryRun bool
 	c := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate a new migration file from schema diff",
@@ -776,12 +915,20 @@ func cmdMigrateGenerate() *cobra.Command {
 				Label:         label,
 				Schemas:       parseSchemas(),
 				Differ:        differOptionsFromFlags(),
+				DryRun:        dryRun,
 			})
 			if err != nil {
 				return err
 			}
-			if res.Filename == "" {
+			// No changes — nothing to do in either mode.
+			if len(res.Statements) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No changes detected — no migration generated.")
+				return nil
+			}
+			if dryRun {
+				// Print the SQL to stdout without writing a file.
+				fmt.Fprintf(cmd.OutOrStdout(), "-- dry-run: %d statement(s), no file written\n", len(res.Statements))
+				fmt.Fprintln(cmd.OutOrStdout(), res.SQL)
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Generated: %s (%d statements)\n", res.Filename, len(res.Statements))
@@ -797,6 +944,7 @@ func cmdMigrateGenerate() *cobra.Command {
 	}
 	c.Flags().StringVar(&label, "label", "", "short description appended to the filename")
 	c.Flags().BoolVar(&generateUndo, "generate-undo", false, "also write a best-effort undo/rollback .sql file alongside the migration")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the generated SQL to stdout without writing a migration file")
 	return c
 }
 
@@ -964,8 +1112,9 @@ Use --up-to to baseline only migrations up to (and including) a specific filenam
 
 func cmdPlan() *cobra.Command {
 	return &cobra.Command{
-		Use:   "plan",
-		Short: "Compute diff and execution plan",
+		Use:          "plan",
+		Short:        "Compute diff and execution plan",
+		SilenceErrors: true, // main() handles errHazardBlocked with exit code 5
 		RunE: func(cmd *cobra.Command, args []string) error {
 			des, err := loadDesired()
 			if err != nil {
@@ -1019,7 +1168,7 @@ func cmdPlan() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "[%d] %s\n", s.ID, s.DDL)
 			}
 			if dr.Plan.HasBlockingHazards(allow) {
-				os.Exit(1)
+				return errHazardBlocked
 			}
 			return nil
 		},
@@ -1030,8 +1179,9 @@ func cmdApply() *cobra.Command {
 	var dry bool
 	var stmtTimeout string
 	c := &cobra.Command{
-		Use:   "apply",
-		Short: "Apply planned DDL",
+		Use:          "apply",
+		Short:        "Apply planned DDL",
+		SilenceErrors: true, // main() handles errHazardBlocked with exit code 5
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dr, err := runDiff()
 			if err != nil {
@@ -1039,7 +1189,8 @@ func cmdApply() *cobra.Command {
 			}
 			allow := render.ParseAllowHazards(allowHaz)
 			if dr.Plan.HasBlockingHazards(allow) {
-				return fmt.Errorf("refusing to apply: blocking hazards; pass --allow-hazards or change schema")
+				fmt.Fprintf(cmd.ErrOrStderr(), "refusing to apply: blocking hazards; pass --allow-hazards or change schema\n")
+				return errHazardBlocked
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
@@ -1063,7 +1214,7 @@ func cmdApply() *cobra.Command {
 func cmdDrift() *cobra.Command {
 	c := &cobra.Command{
 		Use:          "drift",
-		Short:        "Exit 1 if live DB differs from desired SQL",
+		Short:        "Exit 2 if live DB differs from desired SQL",
 		SilenceErrors: true, // main() handles errDriftDetected without printing it
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dr, err := runDiff()

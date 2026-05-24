@@ -6,6 +6,34 @@ All notable changes to pg-flux are documented here. Format follows [Keep a Chang
 
 Nothing yet.
 
+## [0.1.4] — 2026-05-24
+
+### Added
+
+- **`--dry-run` flag for `migrate generate`** (`cmd/pg-flux`): `pg-flux migrate generate --dry-run` prints the generated SQL to stdout without writing any files — useful for previewing changes in CI or before committing.
+- **Documented exit codes** (`cmd/pg-flux`): exit codes are now stable, documented in `--help`, and enforced: `0`=OK, `1`=error, `2`=drift detected, `3`=stale codegen, `4`=undeclared objects, `5`=hazard blocked.
+- **Config key typo warnings** (`cmd/pg-flux`): unknown keys in `pgflux.yml` now print a warning with a Levenshtein-distance suggestion (e.g. `warning: unknown config key "migraitons" — did you mean "migrations"?`).
+- **Python codegen: singularized model names** (`pkg/codegen`): table/view/composite class names are now singularized — `users` → `User`, `todo_tags` → `TodoTag` — matching Go, TypeScript, and Rust conventions.
+- **Python codegen: `UserCreate` / `UserUpdate` helpers** (`pkg/codegen`): every table class gains two companion models. `{Name}Create` excludes identity, generated, and server-default columns; required fields have no default. `{Name}Update` wraps all writable columns as `Optional[T] = None` for partial patch payloads.
+- **Python codegen: ORM config** (`pkg/codegen`): all generated `BaseModel` classes include `model_config = ConfigDict(from_attributes=True)` for SQLAlchemy / SQLModel compatibility; `ConfigDict` is auto-imported from pydantic when needed.
+- **`codegen-python.md` docs** (`apps/web/content/docs`): comprehensive Python codegen reference — quick start, PG→Python type mapping, nullable handling, enums, views, composite types, domains, functions/TypedDict, UserCreate/UserUpdate, ORM compatibility, type overrides, and generated file structure.
+- **`codegen-rust.md` docs** (`apps/web/content/docs`): comprehensive Rust codegen reference — quick start, Cargo.toml snippet, PG→Rust type mapping, `Option<T>`, enums with `sqlx::Type`, views, composite types, domains as newtypes, functions/procedures, module structure, type overrides.
+- **`examples.md` docs** (`apps/web/content/docs`): index page covering all five examples (fastapi-todo, express-bookmarks, go-events, go-shop, rust-hrm) with feature highlights and quick-start commands.
+
+### Fixed
+
+- **SQL injection in enum rename/add DDL** (`pkg/differ`): enum values containing single quotes (e.g. `O'Brien`) are now properly escaped before being interpolated into `ALTER TYPE … RENAME VALUE` and `ALTER TYPE … ADD VALUE` statements.
+- **Advisory lock retry with timeout and guidance** (`pkg/exec`): `migrate apply` now retries `pg_try_advisory_lock` for up to 30 seconds (1-second intervals) before failing; the error message includes the exact `SELECT pg_advisory_unlock(…)` statement for manual recovery.
+- **DSN credential redaction in error messages** (`pkg/db`): passwords in PostgreSQL DSNs are now masked (`***`) in all error messages — no credentials appear in logs or terminal output.
+
+### CI/CD
+
+- **golangci-lint** added to CI (`test.yml`); configured via `.golangci.yml` (errcheck, govet, staticcheck, gosimple, ineffassign, unused, gofmt).
+- **Matrix tests now run on PRs** (previously only on `push`).
+- **All GitHub Actions pinned to full commit SHAs** for supply-chain security.
+- **Windows binaries** (`windows-amd64`, `windows-arm64`) added to the release matrix; packaged as `.zip`.
+- **Code coverage** uploaded as a CI artifact (`coverage.out`).
+
 ## [0.1.3] — 2026-05-24
 
 ### Added

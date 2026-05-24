@@ -203,3 +203,71 @@ func TestBuildCreateEnumSQL_nilSafe(t *testing.T) {
 		t.Errorf("expected empty string for nil EnumType; got: %q", s)
 	}
 }
+
+// ───── SQL injection: single-quote escaping in rename / add ─────────────────
+
+func TestDiffEnumValues_renameEscapesSingleQuote(t *testing.T) {
+	// Rename: live[0]="can't" → desired[0]="won't"
+	desired := stateWithEnums(mkEnum("public", "q", "won't"))
+	live := stateWithEnums(mkEnum("public", "q", "can't"))
+
+	changes := diffEnums(desired, live)
+	var found bool
+	for _, ch := range changes {
+		if strings.Contains(ch.rawSQL, "RENAME VALUE") {
+			found = true
+			if !strings.Contains(ch.rawSQL, "can''t") {
+				t.Errorf("RENAME FROM not escaped; got: %q", ch.rawSQL)
+			}
+			if !strings.Contains(ch.rawSQL, "won''t") {
+				t.Errorf("RENAME TO not escaped; got: %q", ch.rawSQL)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected RENAME VALUE change; got: %+v", changes)
+	}
+}
+
+func TestDiffEnumValues_addValueEscapesSingleQuote(t *testing.T) {
+	// New value "it's new" must be escaped in ADD VALUE.
+	desired := stateWithEnums(mkEnum("public", "q", "existing", "it's new"))
+	live := stateWithEnums(mkEnum("public", "q", "existing"))
+
+	changes := diffEnums(desired, live)
+	var found bool
+	for _, ch := range changes {
+		if strings.Contains(ch.rawSQL, "ADD VALUE") {
+			found = true
+			if !strings.Contains(ch.rawSQL, "it''s new") {
+				t.Errorf("ADD VALUE not escaped; got: %q", ch.rawSQL)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected ADD VALUE change; got: %+v", changes)
+	}
+}
+
+func TestDiffEnumValues_addValueBeforeEscapesSingleQuote(t *testing.T) {
+	// BEFORE neighbour must also be escaped.
+	desired := stateWithEnums(mkEnum("public", "q", "it's new", "o'clock"))
+	live := stateWithEnums(mkEnum("public", "q", "o'clock"))
+
+	changes := diffEnums(desired, live)
+	var found bool
+	for _, ch := range changes {
+		if strings.Contains(ch.rawSQL, "ADD VALUE") && strings.Contains(ch.rawSQL, "BEFORE") {
+			found = true
+			if !strings.Contains(ch.rawSQL, "it''s new") {
+				t.Errorf("ADD VALUE label not escaped; got: %q", ch.rawSQL)
+			}
+			if !strings.Contains(ch.rawSQL, "o''clock") {
+				t.Errorf("BEFORE neighbour not escaped; got: %q", ch.rawSQL)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected ADD VALUE ... BEFORE change; got: %+v", changes)
+	}
+}

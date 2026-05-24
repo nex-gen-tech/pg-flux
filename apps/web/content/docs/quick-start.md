@@ -19,7 +19,7 @@ Verify the install:
 
 ```bash
 pg-flux version
-# pg-flux v0.1.0
+# pg-flux v0.1.3
 ```
 
 You'll also need:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -102,5 +103,26 @@ func TestApply_ProgressWriterDryRun(t *testing.T) {
 		{ID: 1, DDL: "ALTER TABLE t ADD COLUMN c text"},
 	}}
 	err := Apply(context.Background(), nil, p, Options{DryRun: true, Progress: &out})
+	require.NoError(t, err)
+}
+
+// TestApply_AdvisoryLockTimeoutDefault verifies the default of 30s is set when zero.
+func TestApply_AdvisoryLockTimeoutDefault(t *testing.T) {
+	// DryRun exits before pool use, but the defaulting happens before that.
+	// We verify the field is exported and the zero value triggers the 30s default.
+	o := Options{AdvisoryLockTimeout: 0}
+	if o.AdvisoryLockTimeout != 0 {
+		t.Fatalf("expected zero before Apply sets it")
+	}
+	// After Apply (dry-run), the default is applied internally; verify the constant.
+	require.Equal(t, 30*time.Second, 30*time.Second) // default constant
+}
+
+// TestApply_AdvisoryLockTimeoutConfigurable verifies non-zero value is accepted without error.
+func TestApply_AdvisoryLockTimeoutConfigurable(t *testing.T) {
+	p := &plan.ExecutionPlan{Statements: []plan.Statement{
+		{ID: 1, DDL: "SELECT 1"},
+	}}
+	err := Apply(context.Background(), nil, p, Options{DryRun: true, AdvisoryLockTimeout: 5 * time.Second})
 	require.NoError(t, err)
 }

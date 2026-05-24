@@ -126,7 +126,7 @@ func diffEnumValues(d, l *schema.EnumType) []change {
 	for _, r := range renamed {
 		out = append(out, change{
 			kind:   plan.ChangeRawSQL,
-			rawSQL: fmt.Sprintf("ALTER TYPE %s RENAME VALUE '%s' TO '%s'", qual, r.From, r.To),
+			rawSQL: fmt.Sprintf("ALTER TYPE %s RENAME VALUE '%s' TO '%s'", qual, strings.ReplaceAll(r.From, "'", "''"), strings.ReplaceAll(r.To, "'", "''")),
 		})
 		// Update the live tracking so subsequent removal/addition checks ignore
 		// the renamed pair.

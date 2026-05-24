@@ -415,7 +415,7 @@ func TestPythonViews(t *testing.T) {
 	py := string(fs["models.py"])
 
 	assertContains(t, py, "from pydantic import BaseModel")
-	assertContains(t, py, "class ActiveUsers(BaseModel):")
+	assertContains(t, py, "class ActiveUser(BaseModel):")
 	// View columns are nullable
 	assertContains(t, py, "id: Optional[int] = None")
 	assertContains(t, py, "email: Optional[str] = None")
@@ -471,7 +471,7 @@ func TestPythonDomains(t *testing.T) {
 	assertContains(t, py, "from typing import")
 	assertContains(t, py, "NewType")
 	assertContains(t, py, `EmailAddress = NewType("EmailAddress", str)`)
-	assertContains(t, py, `UserId = NewType("UserId", int)`)
+	assertContains(t, py, `UserID = NewType("UserID", int)`)
 }
 
 func TestPythonFunctions(t *testing.T) {

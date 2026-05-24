@@ -35,6 +35,9 @@ type GenerateOptions struct {
 	AllowHazards string
 	// Differ overrides the default differ.Options for this run (auto-rewrites, thresholds, etc.).
 	Differ differ.Options
+	// DryRun computes the diff and populates the result (SQL, Statements) but does
+	// not write any migration file to disk. Filename will be empty in the result.
+	DryRun bool
 }
 
 // GenerateResult is returned by Generate.
@@ -104,6 +107,15 @@ func Generate(
 
 	baselineHash := hashstate.OfSchemaState(live)
 	sql := buildMigrationSQL(diffResult.Plan, baselineHash)
+
+	// Dry-run: return the computed SQL and statements without writing anything.
+	if opts.DryRun {
+		return &GenerateResult{
+			SQL:        sql,
+			Statements: diffResult.Plan.Statements,
+		}, nil
+	}
+
 	filename := TimestampFilename(opts.Label)
 	fullPath := filepath.Join(opts.MigrationsDir, filename)
 

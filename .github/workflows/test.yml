@@ -6,6 +6,25 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version-file: apps/cli/go.mod
+          cache: true
+          cache-dependency-path: apps/cli/go.sum
+
+      - name: install golangci-lint
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.64.8
+
+      - name: lint
+        working-directory: apps/cli
+        run: golangci-lint run ./...
+
   unit:
     name: unit + vet
     runs-on: ubuntu-latest
@@ -24,9 +43,9 @@ jobs:
           --health-timeout=3s
           --health-retries=10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
           go-version-file: apps/cli/go.mod
           cache: true
@@ -40,14 +59,21 @@ jobs:
         working-directory: apps/cli
         env:
           PGFLUX_TEST_DSN: postgres://pgflux:pgflux@localhost:5432/pgflux?sslmode=disable
-        run: go test ./... -race -count=1 -timeout 5m
+        run: go test ./... -race -count=1 -timeout 5m -coverprofile=coverage.out -covermode=atomic
+
+      - name: upload coverage
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68cf7e19c7b48bb5a4dfaf4 # v4.6.2
+        with:
+          name: coverage
+          path: apps/cli/coverage.out
+          retention-days: 7
 
       - name: build binary
         working-directory: apps/cli
         run: go build -o pg-flux ./cmd/pg-flux
 
       - name: upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68cf7e19c7b48bb5a4dfaf4 # v4.6.2
         with:
           name: pg-flux-linux-amd64
           path: apps/cli/pg-flux
@@ -76,9 +102,9 @@ jobs:
           --health-timeout=3s
           --health-retries=10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
           go-version-file: apps/cli/go.mod
           cache: true

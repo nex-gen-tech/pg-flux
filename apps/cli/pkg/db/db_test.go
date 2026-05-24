@@ -7,6 +7,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSanitizeDSN(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"postgres://user:secret@localhost:5432/db", "postgres://user:***@localhost:5432/db"},
+		{"postgres://user:p%40ss@localhost/db", "postgres://user:***@localhost/db"},
+		{"postgres://localhost/db", "postgres://localhost/db"}, // no password component
+		{"postgres://user@localhost/db", "postgres://user@localhost/db"}, // no colon before @
+	}
+	for _, tc := range cases {
+		got := sanitizeDSN(tc.input)
+		if got != tc.want {
+			t.Errorf("sanitizeDSN(%q) = %q; want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestParseConfig_BadURL(t *testing.T) {
 	_, err := pgxpool.ParseConfig("::not-a-postgres-dsn::")
 	require.Error(t, err)

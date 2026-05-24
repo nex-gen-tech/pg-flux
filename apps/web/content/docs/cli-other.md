@@ -62,7 +62,7 @@ Dump every catalog object as CREATE-style SQL to stdout. Read-only, no codegen. 
 
 ```bash
 pg-flux version
-# pg-flux v0.1.0
+# pg-flux v0.1.3
 ```
 
 Prints the binary's version string.

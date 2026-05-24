@@ -70,14 +70,16 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 		}
 		className := g.typeName(t.Schema, t.Name)
 		needed.add("BaseModel")
+		needed.add("ConfigDict")
 		if t.Comment != "" {
 			fmt.Fprintf(&tableBuf, "\nclass %s(BaseModel):\n", className)
 			fmt.Fprintf(&tableBuf, "    \"\"\"%s\"\"\"\n", t.Comment)
 		} else {
 			fmt.Fprintf(&tableBuf, "\nclass %s(BaseModel):\n", className)
 		}
+		tableBuf.WriteString("    model_config = ConfigDict(from_attributes=True)\n")
 		if len(t.Columns) == 0 {
-			tableBuf.WriteString("    pass\n\n")
+			tableBuf.WriteString("\n")
 			continue
 		}
 		for _, c := range t.Columns {
@@ -89,6 +91,41 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 				c.DefaultSQL != "" || c.Identity != "")
 		}
 		tableBuf.WriteString("\n")
+
+		// {Name}Create — writable columns only; server-managed columns are excluded.
+		fmt.Fprintf(&tableBuf, "\nclass %sCreate(BaseModel):\n", className)
+		tableBuf.WriteString("    model_config = ConfigDict(from_attributes=True)\n")
+		writable := make([]*schema.Column, 0, len(t.Columns))
+		for _, c := range t.Columns {
+			if c == nil {
+				continue
+			}
+			if c.Identity != "" || c.GeneratedKind != "" || isServerDefault(c.DefaultSQL) {
+				continue
+			}
+			writable = append(writable, c)
+		}
+		if len(writable) == 0 {
+			tableBuf.WriteString("    pass\n\n")
+		} else {
+			for _, c := range writable {
+				emitPythonField(&tableBuf, ptm, needed, c.Name, c.TypeSQL, !c.NotNull, false, c.DefaultSQL != "")
+			}
+			tableBuf.WriteString("\n")
+		}
+
+		// {Name}Update — all writable columns as Optional[T] = None.
+		fmt.Fprintf(&tableBuf, "\nclass %sUpdate(BaseModel):\n", className)
+		tableBuf.WriteString("    model_config = ConfigDict(from_attributes=True)\n")
+		if len(writable) == 0 {
+			tableBuf.WriteString("    pass\n\n")
+		} else {
+			for _, c := range writable {
+				// All fields are Optional[T] = None for partial updates.
+				emitPythonField(&tableBuf, ptm, needed, c.Name, c.TypeSQL, true, false, false)
+			}
+			tableBuf.WriteString("\n")
+		}
 	}
 
 	// ---- 3. View models (read-only BaseModel) ----
@@ -100,6 +137,7 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 		}
 		className := g.typeName(v.Schema, v.Name)
 		needed.add("BaseModel")
+		needed.add("ConfigDict")
 		kw := "view"
 		if v.Materialized {
 			kw = "materialized view"
@@ -110,8 +148,9 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 		}
 		fmt.Fprintf(&viewBuf, "\nclass %s(BaseModel):\n", className)
 		fmt.Fprintf(&viewBuf, "    \"\"\"%s\"\"\"\n", comment)
+		viewBuf.WriteString("    model_config = ConfigDict(from_attributes=True)\n")
 		if len(v.Columns) == 0 {
-			viewBuf.WriteString("    pass\n\n")
+			viewBuf.WriteString("\n")
 			continue
 		}
 		for _, c := range v.Columns {
@@ -133,14 +172,16 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 		}
 		className := g.typeName(ct.Schema, ct.Name)
 		needed.add("BaseModel")
+		needed.add("ConfigDict")
 		comment := ct.Comment
 		if comment == "" {
 			comment = fmt.Sprintf("Mirrors composite type %s.%s.", ct.Schema, ct.Name)
 		}
 		fmt.Fprintf(&compositeBuf, "\nclass %s(BaseModel):\n", className)
 		fmt.Fprintf(&compositeBuf, "    \"\"\"%s\"\"\"\n", comment)
+		compositeBuf.WriteString("    model_config = ConfigDict(from_attributes=True)\n")
 		if len(ct.Attributes) == 0 {
-			compositeBuf.WriteString("    pass\n\n")
+			compositeBuf.WriteString("\n")
 			continue
 		}
 		for _, a := range ct.Attributes {
@@ -245,7 +286,11 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 		b.WriteString("from uuid import UUID\n")
 	}
 	if needed.has("BaseModel") {
-		b.WriteString("\nfrom pydantic import BaseModel\n")
+		if needed.has("ConfigDict") {
+			b.WriteString("\nfrom pydantic import BaseModel, ConfigDict\n")
+		} else {
+			b.WriteString("\nfrom pydantic import BaseModel\n")
+		}
 	}
 
 	b.WriteString(enumBuf.String())
@@ -302,7 +347,8 @@ func emitPythonField(
 	buf.WriteString("\n")
 }
 
-// typeName converts a PG schema+name pair to a Python CamelCase class name.
+// typeName converts a PG schema+name pair to a Python CamelCase class name,
+// singularizing table/view/composite names (e.g. "users" → "User").
 func (g *PythonGenerator) typeName(schName, objName string) string {
 	full := schName + "." + objName
 	if g.NameOverrides != nil {
@@ -313,7 +359,7 @@ func (g *PythonGenerator) typeName(schName, objName string) string {
 			return v
 		}
 	}
-	return PascalCase(objName)
+	return PascalCaseInit(Singular(objName))
 }
 
 // enumTypeName returns the class name for a PG enum — no singularization.
@@ -383,6 +429,32 @@ func (g *PythonGenerator) collectCustomTypes(s *schema.SchemaState) map[string]s
 		out[d.Name] = ident
 	}
 	return out
+}
+
+// isServerDefault returns true when a column's DefaultSQL expression is managed
+// by the database server and should be excluded from Create/Update helpers.
+// Recognised patterns: now(), CURRENT_TIMESTAMP, gen_random_uuid(), nextval(
+func isServerDefault(defaultSQL string) bool {
+	if defaultSQL == "" {
+		return false
+	}
+	low := strings.ToLower(strings.TrimSpace(defaultSQL))
+	serverPatterns := []string{
+		"now()",
+		"current_timestamp",
+		"current_date",
+		"current_time",
+		"gen_random_uuid()",
+		"nextval(",
+		"clock_timestamp()",
+		"transaction_timestamp()",
+	}
+	for _, p := range serverPatterns {
+		if strings.HasPrefix(low, p) || strings.Contains(low, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // importSet tracks which Python symbols are needed in the file header.

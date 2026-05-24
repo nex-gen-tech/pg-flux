@@ -227,7 +227,7 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 						for _, r := range renamed {
 							out = append(out, change{
 								kind:   plan.ChangeRawSQL,
-								rawSQL: fmt.Sprintf("ALTER TYPE %s RENAME VALUE '%s' TO '%s'", qualName, r.From, r.To),
+								rawSQL: fmt.Sprintf("ALTER TYPE %s RENAME VALUE '%s' TO '%s'", qualName, strings.ReplaceAll(r.From, "'", "''"), strings.ReplaceAll(r.To, "'", "''")),
 							})
 							// Update tracking sets so removed-detection below doesn't treat
 							// the renamed-old as a still-pending removal.
@@ -257,17 +257,17 @@ func diffExtraDDL(d *schema.SchemaState, live *schema.SchemaState) []change {
 							if _, ok := liveSet[v]; ok {
 								continue // already exists (possibly after rename)
 							}
-							addSQL := "ALTER TYPE " + qualName + " ADD VALUE IF NOT EXISTS '" + v + "'"
+							addSQL := "ALTER TYPE " + qualName + " ADD VALUE IF NOT EXISTS '" + strings.ReplaceAll(v, "'", "''") + "'"
 							// Position the new value relative to neighbours in the desired list.
 							if i < len(desiredVals)-1 {
 								next := desiredVals[i+1]
 								if _, exists := liveSet[next]; exists {
-									addSQL += " BEFORE '" + next + "'"
+									addSQL += " BEFORE '" + strings.ReplaceAll(next, "'", "''") + "'"
 								}
 							} else if i > 0 {
 								prev := desiredVals[i-1]
 								if _, exists := liveSet[prev]; exists {
-									addSQL += " AFTER '" + prev + "'"
+									addSQL += " AFTER '" + strings.ReplaceAll(prev, "'", "''") + "'"
 								}
 							}
 							out = append(out, change{kind: plan.ChangeRawSQL, rawSQL: addSQL})

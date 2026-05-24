@@ -195,7 +195,7 @@ pg-flux generates typed application code **and** completes in half the time Atla
 
 ## Status
 
-**v0.1.2 — production-ready against PostgreSQL 14–18.** The 130/130 PG-version × mutation matrix runs in CI nightly and on every merge to `main`. Five real-world example apps (FastAPI + Python, Express + TypeScript, Go events, Go e-commerce, Rust HRM) pass `drift` and `verify` cleanly.
+**v0.1.3 — production-ready against PostgreSQL 14–18.** The 130/130 PG-version × mutation matrix runs in CI nightly and on every merge to `main`. Five real-world example apps (FastAPI + Python, Express + TypeScript, Go events, Go e-commerce, Rust HRM) pass `drift` and `verify` cleanly.
 
 See [CHANGELOG.md](./CHANGELOG.md) for what changed in each release and [ROADMAP.md](./ROADMAP.md) for what's coming.
 
@@ -213,7 +213,7 @@ Other paths:
 |---|---|
 | **curl \| sh** | `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh \| sh` |
 | Manual binary | Download from [GitHub Releases](https://github.com/nex-gen-tech/pg-flux/releases), `tar -xzf`, move to `/usr/local/bin` |
-| Pin a version | `curl -sSfL .../install.sh \| PGFLUX_VERSION=v0.1.2 sh` |
+| Pin a version | `curl -sSfL .../install.sh \| PGFLUX_VERSION=v0.1.3 sh` |
 | Go install | `go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest` |
 | Build from source | `git clone … && cd pg-flux/apps/cli && go build -o pg-flux ./cmd/pg-flux` |
 

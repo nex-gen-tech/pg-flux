@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nex-gen-tech/pg-flux/pkg/obs"
@@ -21,10 +22,37 @@ var validTimeout = regexp.MustCompile(`^[0-9a-zA-Z ]+$`)
 
 // Options for applying a plan.
 type Options struct {
-	DryRun           bool
-	LockTimeout      string    // e.g. "3s"; defaults to "3s"
-	StatementTimeout string    // e.g. "0" (unlimited) or "20min"; empty = not set
-	Progress         io.Writer // if non-nil, per-statement progress is written here
+	DryRun              bool
+	LockTimeout         string        // e.g. "3s"; defaults to "3s" — passed to SET LOCAL lock_timeout
+	StatementTimeout    string        // e.g. "0" (unlimited) or "20min"; empty = not set
+	Progress            io.Writer     // if non-nil, per-statement progress is written here
+	AdvisoryLockTimeout time.Duration // how long to retry pg_try_advisory_lock; 0 defaults to 30s
+}
+
+// tryAcquireAdvisoryLock retries pg_try_advisory_lock at 1-second intervals for up to timeout.
+// It returns nil on success or a descriptive error (with the manual release command) on timeout.
+func tryAcquireAdvisoryLock(ctx context.Context, c *pgx.Conn, lockID int64, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		var ok bool
+		if err := c.QueryRow(ctx, `SELECT pg_try_advisory_lock($1::bigint)`, lockID).Scan(&ok); err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"could not acquire pg-flux migration lock after %.0fs — another migration may be running. To release manually: SELECT pg_advisory_unlock(%d);",
+				timeout.Seconds(), lockID,
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 // Apply runs DDL: one transaction for non-concurrent statements, then each CONCURRENT statement autocommit (PRD).
@@ -44,6 +72,10 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, p *plan.ExecutionPlan, o Opt
 	if o.StatementTimeout != "" && !validTimeout.MatchString(o.StatementTimeout) {
 		return fmt.Errorf("invalid statement_timeout value %q: only digits, letters, and spaces are allowed", o.StatementTimeout)
 	}
+	if o.AdvisoryLockTimeout == 0 {
+		o.AdvisoryLockTimeout = 30 * time.Second
+	}
+
 	cfg := pool.Config()
 	lockKey := fmt.Sprintf("%s:%d/%s", cfg.ConnConfig.Host, cfg.ConnConfig.Port, cfg.ConnConfig.Database)
 	h := sha256.Sum256([]byte(lockKey))
@@ -82,14 +114,9 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, p *plan.ExecutionPlan, o Opt
 		if _, err := c.Exec(ctx, "BEGIN"); err != nil {
 			return err
 		}
-		var ok bool
-		if err := c.QueryRow(ctx, `SELECT pg_try_advisory_lock($1::bigint)`, lockID).Scan(&ok); err != nil {
+		if err := tryAcquireAdvisoryLock(ctx, c, lockID, o.AdvisoryLockTimeout); err != nil {
 			_, _ = c.Exec(ctx, "ROLLBACK")
 			return err
-		}
-		if !ok {
-			_, _ = c.Exec(ctx, "ROLLBACK")
-			return fmt.Errorf("could not acquire migration advisory lock (another apply in progress)")
 		}
 		lockAcquired = true
 		if _, err := c.Exec(ctx, "SET LOCAL lock_timeout = '"+o.LockTimeout+"'"); err != nil {
@@ -133,12 +160,8 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, p *plan.ExecutionPlan, o Opt
 	// CONCURRENT index ops cannot run in an open transaction; each Exec autocommits.
 	if len(concurrent) > 0 {
 		if len(nonConcurrent) == 0 {
-			var ok bool
-			if err := c.QueryRow(ctx, `SELECT pg_try_advisory_lock($1::bigint)`, lockID).Scan(&ok); err != nil {
+			if err := tryAcquireAdvisoryLock(ctx, c, lockID, o.AdvisoryLockTimeout); err != nil {
 				return err
-			}
-			if !ok {
-				return fmt.Errorf("could not acquire migration advisory lock (another apply in progress)")
 			}
 			lockAcquired = true
 		}

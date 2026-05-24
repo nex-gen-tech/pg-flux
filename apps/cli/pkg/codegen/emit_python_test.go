@@ -174,16 +174,36 @@ func TestPythonTypeName(t *testing.T) {
 	cases := []struct {
 		sch, name, want string
 	}{
-		{"public", "users", "Users"},
-		{"public", "todo_tags", "TodoTags"},
-		{"public", "todo_priority", "TodoPriority"},
-		{"public", "categories", "Categories"},
+		// Singularized table/view names
+		{"public", "users", "User"},
+		{"public", "todo_tags", "TodoTag"},
+		{"public", "categories", "Category"},
 		{"myapp", "user_profile", "UserProfile"},
+		// Exceptions: words ending in 's' that are already singular
+		{"public", "todo_priority", "TodoPriority"},
 	}
 	for _, tc := range cases {
 		got := g.typeName(tc.sch, tc.name)
 		if got != tc.want {
 			t.Errorf("typeName(%q, %q) = %q, want %q", tc.sch, tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestPythonEnumTypeNameNotSingularized(t *testing.T) {
+	g := NewPythonGenerator()
+	cases := []struct {
+		sch, name, want string
+	}{
+		// Enum names should NOT be singularized
+		{"public", "user_roles", "UserRoles"},
+		{"public", "todo_priorities", "TodoPriorities"},
+		{"public", "status", "Status"},
+	}
+	for _, tc := range cases {
+		got := g.enumTypeName(tc.sch, tc.name)
+		if got != tc.want {
+			t.Errorf("enumTypeName(%q, %q) = %q, want %q", tc.sch, tc.name, got, tc.want)
 		}
 	}
 }
@@ -242,8 +262,12 @@ func TestPythonGenerateRoundTrip(t *testing.T) {
 	assertContains(t, py, `INACTIVE = "inactive"`)
 	assertContains(t, py, `PENDING = "pending"`)
 
-	// Table class
-	assertContains(t, py, "class Items(BaseModel):")
+	// Table class — singularized: "items" → "Item"
+	assertContains(t, py, "class Item(BaseModel):")
+	// ORM config on base class
+	assertContains(t, py, "model_config = ConfigDict(from_attributes=True)")
+	// ConfigDict import
+	assertContains(t, py, "from pydantic import BaseModel, ConfigDict")
 	// id: identity column → has default → Optional with = None
 	assertContains(t, py, "id: Optional[int] = None")
 	// name: NOT NULL, no default → plain str
@@ -258,6 +282,14 @@ func TestPythonGenerateRoundTrip(t *testing.T) {
 	assertContains(t, py, "name_lower: Optional[str] = None  # server-computed")
 	// data: nullable jsonb
 	assertContains(t, py, "data: Optional[dict[str, Any]] = None")
+
+	// ItemCreate — server-managed columns excluded (id=identity, name_lower=generated)
+	assertContains(t, py, "class ItemCreate(BaseModel):")
+	// name is writable and required
+	assertContains(t, py, "class ItemCreate(BaseModel):")
+
+	// ItemUpdate — all writable fields as Optional
+	assertContains(t, py, "class ItemUpdate(BaseModel):")
 }
 
 func assertContains(t *testing.T, haystack, needle string) {

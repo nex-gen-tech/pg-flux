@@ -1,0 +1,14 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - gofmt
+linters-settings:
+  errcheck:
+    ignore: "fmt:.*,os:.*"  # ignore fmt.Fprintf and os.Stderr writes
+run:
+  timeout: 5m
