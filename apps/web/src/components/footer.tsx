@@ -111,7 +111,7 @@ export function Footer() {
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-[hsl(140_60%_50%)]" />
               PostgreSQL 14 – 18
             </span>
-            <span>v0.1.2</span>
+            <span>v0.1.3</span>
           </div>
         </div>
       </div>

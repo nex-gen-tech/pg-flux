@@ -6,6 +6,13 @@ All notable changes to pg-flux are documented here. Format follows [Keep a Chang
 
 Nothing yet.
 
+## [0.1.3] — 2026-05-24
+
+### Added
+
+- **Benchmark suite and competitor comparison** (`docs/benchmarks.md`, `README.md`): real measurements (darwin-arm64, PostgreSQL 17, 73-object schema) comparing pg-flux against Atlas, Flyway, Liquibase, golang-migrate, goose, Alembic, and Prisma Migrate across five dimensions: CLI cold-start latency, schema drift speed, migration apply speed, codegen speed, and binary size. Methodology and reproduction instructions documented in `docs/benchmarks.md`.
+- **Feature matrix** (`README.md`): 18-row × 8-tool comparison table covering declarative schema, drift detection, hazard guards, NOT VALID rewrite, native PG parser, PG 14–18 version gating, advisory lock, bidirectional dump, app codegen (Go/TS/Python/Rust), binary footprint, and more.
+
 ## [0.1.2] — 2026-05-22
 
 ### Added
@@ -126,7 +133,8 @@ The first public release. The point of v0.1 is: "this works against real PG 14-1
 - [shadcn-ui/ui](https://github.com/shadcn-ui/ui) — the component primitives behind the docs site.
 - The PostgreSQL team for building the database we're trying to help you manage.
 
-[Unreleased]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/nex-gen-tech/pg-flux/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/nex-gen-tech/pg-flux/releases/tag/v0.1.0
