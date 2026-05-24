@@ -207,8 +207,10 @@ var (
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
-		// cobra prints the error message itself ("Error: ...") for most commands.
-		// Sentinel errors are handled quietly here with specific exit codes.
+		// Sentinel errors are handled quietly — they have specific exit codes and
+		// the command already printed the human-readable summary. Non-sentinel errors
+		// come from commands with SilenceErrors:true that cobra won't print; we must
+		// print them here so users are never left with a silent exit 1.
 		switch {
 		case errors.Is(err, errDriftDetected):
 			os.Exit(exitDrift)
@@ -219,6 +221,7 @@ func main() {
 		case errors.Is(err, errHazardBlocked):
 			os.Exit(exitHazardBlocked)
 		default:
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(exitErr)
 		}
 	}
@@ -264,6 +267,14 @@ Exit codes:
 	r.PersistentFlags().StringVar(&shadowDSN, "shadow-dsn", os.Getenv("PGFLUX_SHADOW_DSN"), "optional disposable DB DSN for shadow validation (see --shadow-semantic, --shadow-equivalence)")
 	r.PersistentFlags().BoolVar(&shadowSemanticF, "shadow-semantic", false, "if set with --shadow-dsn, apply the plan with autocommit on that DB (mutates DB — use disposable instance; stronger than rolled-back syntax check)")
 	r.PersistentFlags().BoolVar(&shadowEquivF, "shadow-equivalence", false, "with --shadow-dsn, run semantic apply on an empty shadow DB then require inspected catalog to match desired (structural check; not a formal proof vs production)")
+	// Advanced / rarely-used flags — still functional but hidden from --help to reduce noise.
+	for _, name := range []string{
+		"validate-plpgsql", "validate-sql", "append-validate-not-valid",
+		"set-not-null-reltuple-hint", "shadow-semantic", "shadow-equivalence",
+		"log-format",
+	} {
+		_ = r.PersistentFlags().MarkHidden(name)
+	}
 	r.PersistentFlags().StringVar(&configFile, "config", ".pg-flux.yml", "path to config file")
 	r.PersistentFlags().StringVar(&migrationsDir, "migrations-dir", "./migrations", "directory for migration .sql files")
 	r.PersistentFlags().StringVar(&trackingSchema, "tracking-schema", "_pgflux", "schema used to track applied migrations")
@@ -605,9 +616,17 @@ func cmdPull() *cobra.Command {
 				return err
 			}
 			if dry {
-				fmt.Fprintf(cmd.OutOrStdout(), "Would write %d object(s):\n%s", res.ObjectCount, res.SQL)
+				if res.ObjectCount == 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "No undeclared objects found — nothing to pull.")
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "Would write %d object(s) to %s:\n%s", res.ObjectCount, out, res.SQL)
+				}
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d object(s) to %s\n", res.ObjectCount, res.Filename)
+				if res.ObjectCount == 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "No undeclared objects found — nothing written to %s\n", out)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d object(s) to %s\n", res.ObjectCount, res.Filename)
+				}
 			}
 			return nil
 		},
@@ -794,7 +813,7 @@ func cmdGen() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringSliceVar(&langs, "lang", nil, "target language(s): go,ts (repeatable; default: go)")
+	c.Flags().StringSliceVar(&langs, "lang", nil, "target language(s): go,ts,python,rust (repeatable; default: go)")
 	c.Flags().StringVar(&outDir, "out", "", "output directory (single-language mode; default ./internal/dbgen)")
 	c.Flags().StringVar(&pkgName, "package", "", "Go package name (default: dbgen)")
 	c.Flags().BoolVar(&fromSource, "from-source", false, "generate from schema files instead of the live DB")
@@ -939,6 +958,7 @@ func cmdMigrateGenerate() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Undo:      %s\n", undoFile)
 			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: pg-flux migrate apply")
 			return nil
 		},
 	}
@@ -979,6 +999,9 @@ func cmdMigrateApply() *cobra.Command {
 				humanPrintf(cmd, "\nDry run: %d pending, %d already applied.\n", len(res.Applied), len(res.Skipped))
 			} else {
 				humanPrintf(cmd, "\nApplied %d migration(s), %d already up to date.\n", len(res.Applied), len(res.Skipped))
+				if len(res.Applied) > 0 {
+					humanPrintf(cmd, "Next: pg-flux gen    (refresh generated types)\n")
+				}
 			}
 			return nil
 		},
@@ -1285,6 +1308,7 @@ func cmdInspect() *cobra.Command {
 				_ = os.WriteFile(out+"/tables/"+safe+".sql", []byte(b.String()), 0o644)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Wrote table stubs under %s/tables/\n", out)
+			fmt.Fprintf(cmd.OutOrStdout(), "Note: if %s/ already contains .sql files that define the same tables,\ndelete or move the new stubs to avoid \"duplicate table definition\" errors.\n", out)
 			return nil
 		},
 	}

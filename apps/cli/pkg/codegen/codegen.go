@@ -147,8 +147,10 @@ func WriteSummary(w io.Writer, lang Language, written, skipped int, diffs []stri
 		}
 		return
 	}
-	if written > 0 {
-		fmt.Fprintf(w, "[%s] wrote %d, skipped %d (already up to date)\n", lang, written, skipped)
+	if written > 0 && skipped > 0 {
+		fmt.Fprintf(w, "[%s] wrote %d file(s), %d already up to date\n", lang, written, skipped)
+	} else if written > 0 {
+		fmt.Fprintf(w, "[%s] wrote %d file(s)\n", lang, written)
 	} else {
 		fmt.Fprintf(w, "[%s] %d file(s) already up to date\n", lang, skipped)
 	}

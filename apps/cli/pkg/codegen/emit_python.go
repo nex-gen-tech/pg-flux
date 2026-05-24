@@ -86,9 +86,10 @@ func (g *PythonGenerator) Generate(s *schema.SchemaState, opts Options) (FileSet
 			if c == nil {
 				continue
 			}
+			serverManaged := c.GeneratedKind != "" || c.Identity != ""
 			emitPythonField(&tableBuf, ptm, needed, c.Name, c.TypeSQL, !c.NotNull,
-				c.GeneratedKind == "stored" || c.GeneratedKind == "virtual",
-				c.DefaultSQL != "" || c.Identity != "")
+				serverManaged,
+				!serverManaged && c.DefaultSQL != "")
 		}
 		tableBuf.WriteString("\n")
 
@@ -331,15 +332,16 @@ func emitPythonField(
 	case nullable:
 		fieldParts.WriteString(" = None")
 	case hasDefault:
-		// Has a DB default but NOT NULL: Optional[T] = None so callers
-		// can omit it on the Python side and let the DB fill it.
+		// NOT NULL column with a DB-side default: rendered Optional so callers can
+		// omit it when constructing objects (DB fills the value). It is always
+		// non-null when read back from the database.
 		if !strings.HasPrefix(typeExpr, "Optional[") {
 			needed.add("Optional")
 			retyped := "Optional[" + typeExpr + "]"
 			fieldParts.Reset()
-			fmt.Fprintf(&fieldParts, "    %s: %s = None", colName, retyped)
+			fmt.Fprintf(&fieldParts, "    %s: %s = None  # has DB default", colName, retyped)
 		} else {
-			fieldParts.WriteString(" = None")
+			fieldParts.WriteString(" = None  # has DB default")
 		}
 	}
 
