@@ -2,7 +2,7 @@
 title: Codegen commands
 group: Reference
 order: 3
-description: pg-flux gen — generate Go and TypeScript types from the schema.
+description: pg-flux gen — generate Go, TypeScript, Python, and Rust types from the schema.
 ---
 
 ## `pg-flux gen`
@@ -10,7 +10,7 @@ description: pg-flux gen — generate Go and TypeScript types from the schema.
 Generate application-language types from the schema. Default output is `./internal/dbgen` for Go.
 
 ```bash
-pg-flux gen [--lang go|ts]... [--out DIR] [--check] [--from-source]
+pg-flux gen [--lang go|ts|python|rust]... [--out DIR] [--check] [--from-source]
             [--package NAME] [--codegen-config FILE]
 ```
 
@@ -18,11 +18,11 @@ pg-flux gen [--lang go|ts]... [--out DIR] [--check] [--from-source]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--lang <list>` | `go` | Target language(s); repeatable: `go,ts` |
+| `--lang <list>` | `go` | Target language(s); repeatable: `go,ts,python,rust` |
 | `--out <dir>` | `./internal/dbgen` | Output directory (single-output mode) |
 | `--package <name>` | `dbgen` | Go package name |
 | `--from-source` | off | Read from `schema/` instead of the live DB |
-| `--check` | off | Exit 1 if on-disk files differ from emitter output |
+| `--check` | off | Exit 1 if on-disk files differ from emitter output. Exit code 3 when files are stale. |
 | `--codegen-config <file>` | `.pg-flux-codegen.yml` | Multi-output config |
 
 ### Emit option flags
@@ -62,6 +62,12 @@ internal/dbgen/    (Go)
 src/db/            (TS — when --out=./src/db)
   tables.ts enums.ts types.ts views.ts functions.ts
   brands.ts validators.ts index.ts
+
+gen/               (Python — when --out=./gen)
+  models.py
+
+src-rust/db/       (Rust — when --out=./src-rust/db)
+  tables.rs enums.rs views.rs types.rs functions.rs mod.rs
 ```
 
 > [!TIP]

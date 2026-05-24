@@ -115,7 +115,7 @@ Views — including materialized views — are emitted as read-only `BaseModel` 
 ```python
 class ActiveUserSummary(BaseModel):
     """Read-only view."""
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(from_attributes=True)
 
     user_id: Optional[int] = None
     email: Optional[str] = None
@@ -222,7 +222,7 @@ class UserUpdate(BaseModel):
 
 ## ORM compatibility
 
-To use the generated models with an ORM that yields row objects instead of dicts, enable `from_attributes`:
+`model_config = ConfigDict(from_attributes=True)` is automatically emitted on every generated `BaseModel` class. This means all generated models work out-of-the-box with SQLAlchemy, psycopg3, and any ORM that yields attribute-based row objects — no extra configuration required.
 
 ```python
 class User(BaseModel):
@@ -338,7 +338,7 @@ class UserUpdate(BaseModel):
 
 class ActiveUserSummary(BaseModel):
     """Read-only view."""
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(from_attributes=True)
     user_id: Optional[int] = None
     email: Optional[str] = None
 

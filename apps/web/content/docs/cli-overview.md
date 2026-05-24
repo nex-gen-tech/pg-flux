@@ -20,12 +20,12 @@ pg-flux
 │   └── baseline FILE       mark a file as already-applied
 ├── plan                     compute diff without writing a file
 ├── apply                    apply the in-memory plan
-├── drift [--strict]         live ≠ source? exit 1
+├── drift                    live ≠ source? exit 2
 ├── verify [--strict]        live ⊃ source? exit 1
 ├── inspect                  dump every catalog object as CREATE-style SQL
 ├── dump                     extract live schema to source files
 ├── pull                     capture undeclared live objects to quarantine
-├── gen [init]               generate Go / TypeScript types
+├── gen [init]               generate Go / TypeScript / Python / Rust types
 └── version
 ```
 
@@ -57,6 +57,7 @@ Every subcommand inherits these:
 | `2` | Drift detected by `drift --strict` |
 | `3` | Stale codegen detected by `gen --check` |
 | `4` | Undeclared live objects detected by `verify --strict` |
+| `5` | Hazard blocked — `migrate apply` refused a blocking hazard; re-run with `--allow-hazards` |
 
 > [!TIP]
 > CI pipelines should treat any non-zero exit as a hard failure unless the

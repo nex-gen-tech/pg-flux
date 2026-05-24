@@ -22,15 +22,15 @@ pg-flux gen --check  # exit 1 if generated files are stale (CI gate)
 
 ## What gets generated
 
-| PG object | Go | TypeScript |
-|---|---|---|
-| Table | `type User struct { … }` | `interface User { … }` |
-| View / matview | struct with typed fields | interface with typed fields |
-| Enum | `type Role string` + constants + `Scan`/`Value` | union / const-object / ts-enum |
-| Composite type | struct | interface |
-| Domain | type alias | type alias |
-| Function | `<Name>Params` + `<Name>Result`/`Row` | `<Name>Params` + `<Name>Result`/`Row` |
-| Procedure | `<Name>Params` only | `<Name>Params` only |
+| PG object | Go | TypeScript | Python | Rust |
+|---|---|---|---|---|
+| Table | `type User struct { … }` | `interface User { … }` | `class User(BaseModel)` + `UserCreate` + `UserUpdate` | `pub struct User { … }` |
+| View / matview | struct with typed fields | interface with typed fields | `class UserView(BaseModel)` — all fields Optional | `pub struct UserView { … }` — all fields Option<T> |
+| Enum | `type Role string` + constants | union / const-object / ts-enum | `class Role(str, Enum)` | `pub enum Role` with sqlx::Type |
+| Composite type | struct | interface | `class Address(BaseModel)` | `pub struct Address` |
+| Domain | type alias | type alias | `NewType("EmailAddress", str)` | newtype struct `pub struct EmailAddress(pub String)` |
+| Function | `<Name>Params` + `<Name>Result` | `<Name>Params` + `<Name>Result` | `TypedDict` params + `BaseModel` result | `<Name>Params` struct + result type |
+| Procedure | `<Name>Params` only | `<Name>Params` only | `TypedDict` params only | `<Name>Params` struct only |
 
 Sequences, indexes, triggers, policies aren't generated — they don't have row shapes. (See [Function signatures →](/docs/codegen-functions.html) for the rationale.)
 
@@ -114,6 +114,10 @@ pg-flux: tstype=Array<{ k: string; v: number }> gotype=map[string][]byte
 
 ## See also
 
+- [Go codegen →](/docs/codegen-go.html)
+- [TypeScript codegen →](/docs/codegen-ts.html)
+- [Python codegen →](/docs/codegen-python.html)
+- [Rust codegen →](/docs/codegen-rust.html)
 - [Function signatures →](/docs/codegen-functions.html)
 - [zod validators →](/docs/codegen-zod.html)
 - [Migration → codegen integration →](/docs/codegen-workflow.html)

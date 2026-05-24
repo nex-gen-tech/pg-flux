@@ -15,10 +15,20 @@ pg-flux migrate generate [--label NAME] [--generate-undo]
 
 | Flag | Description |
 |---|---|
+| `--dry-run` | Print the SQL to stdout without writing any file |
 | `--label <text>` | Appended to the timestamped filename: `20260520_103245_<label>.sql` |
 | `--generate-undo` | Also write a best-effort reverse-migration alongside |
 
 The generated file embeds a `pg-flux-baseline-hash` header so `apply` can detect drift.
+
+> [!TIP]
+> Use `--dry-run` to preview a migration before committing it:
+> ```bash
+> $ pg-flux migrate generate --dry-run
+> -- dry-run: 2 statement(s), no file written
+> ALTER TABLE users ADD COLUMN phone text;
+> CREATE INDEX idx_users_phone ON users (phone);
+> ```
 
 > [!NOTE]
 > Generation is read-only — it queries `pg_catalog` and writes a file.
@@ -48,6 +58,12 @@ pg-flux migrate apply [--dry-run] [--shadow-dsn URL] [--force-after-drift]
 | `--force-after-drift` | Apply even if the baseline-hash drift check fails |
 
 Each migration runs inside a transaction (CONCURRENTLY statements run autocommit after). A session-level advisory lock prevents concurrent applies against the same database.
+
+pg-flux retries acquisition for up to **30 seconds** (1-second intervals). If it still cannot acquire the lock, the error message includes the exact SQL to release it manually:
+
+```sql
+SELECT pg_advisory_unlock(7040926865817495040);
+```
 
 > [!WARNING]
 > Skipping the drift check with `--force-after-drift` should be rare. The

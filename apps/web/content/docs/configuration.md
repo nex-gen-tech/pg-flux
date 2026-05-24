@@ -69,6 +69,20 @@ outputs:
       numeric: string
       uuid:    string
 
+  - lang: python
+    out: ./gen
+    null_style: optional          # optional | union
+    enum_style: strenum           # strenum | enum
+    functions: false
+    type_overrides:
+      numeric: decimal.Decimal
+
+  - lang: rust
+    out: ./src/db
+    functions: false
+    type_overrides:
+      numeric: rust_decimal::Decimal
+
 # Filtering — applies per output.
 exclude_tables: ["_pgflux_*", "audit_*"]
 exclude_schemas: ["_pgflux", "audit"]
@@ -108,6 +122,16 @@ Any text before `pg-flux:` becomes the field's documentation comment.
 2. Environment variable
 3. `.pg-flux.yml` / `.pg-flux-codegen.yml`
 4. Built-in default (lowest)
+
+## Config key validation
+
+pg-flux validates `.pg-flux.yml` on every run. Unknown keys trigger a warning with a spelling suggestion:
+
+```text
+warning: unknown config key "migraitons" in .pg-flux.yml — did you mean "migrations"?
+```
+
+The suggestion uses Levenshtein distance, so it catches common typos. If no close match exists, the key is still listed so you can find it.
 
 ## See also
 

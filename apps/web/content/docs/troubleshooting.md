@@ -155,14 +155,27 @@ You edited a migration file *after* it was applied. The tracking table has the o
 Error: could not acquire migration advisory lock (another apply in progress)
 ```
 
-Two apply processes are racing against the same database. Wait for the other to finish, or kill the stuck process (and clear the advisory lock):
+Two apply processes are racing against the same database. pg-flux retries for **30 seconds** (once per second) before giving up. If it still fails, either:
+
+1. Wait for the other process to finish naturally, then retry.
+2. If the other process is stuck or dead, release the lock manually:
 
 ```sql
--- find the lock holder
-SELECT pid, application_name, query FROM pg_stat_activity
-WHERE pid IN (SELECT pid FROM pg_locks WHERE locktype = 'advisory');
+-- find and release the pg-flux advisory lock
+SELECT pg_advisory_unlock(7040926865817495040);
+```
 
--- if confirmed stuck:
+The exact lock ID is printed in the error message. If you lost the error output, check for running queries:
+
+```sql
+SELECT pid, query, query_start
+FROM pg_stat_activity
+WHERE query LIKE '%pg_advisory%';
+```
+
+Then terminate the holding process if it's stuck:
+
+```sql
 SELECT pg_terminate_backend(<pid>);
 ```
 
@@ -351,6 +364,18 @@ include_tables:
 ```
 
 When `include_tables` is non-empty, it acts as an allowlist — only matching tables get types. Everything else is silent-dropped (no error).
+
+### Unknown config key warning
+
+```text
+warning: unknown config key "migraitons" in .pg-flux.yml — did you mean "migrations"?
+```
+
+pg-flux validates all keys in `.pg-flux.yml` on every run. If a key is unrecognised, it prints a warning (not an error — the tool still runs). The suggestion is based on Levenshtein distance to the nearest valid key.
+
+Valid keys in `.pg-flux.yml`: `version`, `db`, `schema_dir`, `migrations_dir`, `target_schemas`, `tracking_schema`, `shadow_dsn`.
+
+If you see this warning and the key looks correct, you may be using a key that belongs in `.pg-flux-codegen.yml` instead.
 
 ## When all else fails
 

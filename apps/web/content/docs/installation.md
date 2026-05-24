@@ -28,11 +28,11 @@ Verify:
 
 ```bash
 $ pg-flux version
-pg-flux v0.1.3
+pg-flux v0.1.4
 ```
 
 > [!TIP]
-> Pin to a specific version: `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | PGFLUX_VERSION=v0.1.3 sh`.
+> Pin to a specific version: `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | PGFLUX_VERSION=v0.1.4 sh`.
 > Override the install directory: `... | PGFLUX_BIN_DIR=$HOME/.local/bin sh`.
 
 ## Manual binary download
@@ -60,6 +60,17 @@ sudo mv pg-flux /usr/local/bin/
 curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-linux-arm64.tar.gz
 tar -xzf pg-flux.tar.gz
 sudo mv pg-flux /usr/local/bin/
+
+# Windows x86_64 (PowerShell)
+Invoke-WebRequest -Uri "https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-windows-amd64.zip" -OutFile pg-flux-windows-amd64.zip
+Expand-Archive pg-flux-windows-amd64.zip
+Move-Item pg-flux-windows-amd64\pg-flux.exe C:\Windows\System32\
+pg-flux version
+
+# Windows ARM64 (PowerShell)
+Invoke-WebRequest -Uri "https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-windows-arm64.zip" -OutFile pg-flux-windows-arm64.zip
+Expand-Archive pg-flux-windows-arm64.zip
+Move-Item pg-flux-windows-arm64\pg-flux.exe C:\Windows\System32\
 ```
 
 Always verify the checksum if you download manually:
@@ -70,8 +81,7 @@ shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
 > [!NOTE]
-> Supported platforms are `darwin-arm64`, `darwin-amd64`, `linux-amd64`, and `linux-arm64`.
-> Windows isn't shipped because the `libpg_query` C library doesn't build cleanly on it yet.
+> Supported platforms: `darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`, `windows-amd64`, `windows-arm64`. Windows builds use precompiled libpg_query; CGO is not required on Windows.
 
 ## Go install
 
@@ -88,7 +98,7 @@ The binary lands in `$GOBIN` (or `$GOPATH/bin` if `GOBIN` isn't set). Make sure 
 export PATH="$PATH:$(go env GOBIN):$(go env GOPATH)/bin"
 ```
 
-Pin to a specific tag with `@v0.1.3` instead of `@latest`.
+Pin to a specific tag with `@v0.1.4` instead of `@latest`.
 
 ## From source
 
