@@ -28,11 +28,11 @@ Verify:
 
 ```bash
 $ pg-flux version
-pg-flux v0.1.4
+pg-flux v0.1.5
 ```
 
 > [!TIP]
-> Pin to a specific version: `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | PGFLUX_VERSION=v0.1.4 sh`.
+> Pin to a specific version: `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | PGFLUX_VERSION=v0.1.5 sh`.
 > Override the install directory: `... | PGFLUX_BIN_DIR=$HOME/.local/bin sh`.
 
 ## Manual binary download
@@ -98,7 +98,7 @@ The binary lands in `$GOBIN` (or `$GOPATH/bin` if `GOBIN` isn't set). Make sure 
 export PATH="$PATH:$(go env GOBIN):$(go env GOPATH)/bin"
 ```
 
-Pin to a specific tag with `@v0.1.4` instead of `@latest`.
+Pin to a specific tag with `@v0.1.5` instead of `@latest`.
 
 ## From source
 

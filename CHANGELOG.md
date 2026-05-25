@@ -6,6 +6,29 @@ All notable changes to pg-flux are documented here. Format follows [Keep a Chang
 
 Nothing yet.
 
+## [0.1.5] — 2026-05-25
+
+### Fixed
+
+- **Silent error output** (`cmd/pg-flux`): commands with `SilenceErrors:true` (`drift`, `verify`, `plan`, `apply`, `gen`) now print `Error: <message>` to stderr before exiting — previously any non-sentinel error (bad DSN, missing schema dir, connection refused) produced zero output and a silent exit 1.
+- **Python codegen: identity column annotation** (`pkg/codegen`): identity columns (`GENERATED ALWAYS AS IDENTITY`) now correctly annotate `# server-computed` instead of incorrectly falling through to `# has DB default`.
+- **Python codegen: DB-default comment** (`pkg/codegen`): `NOT NULL` columns with a non-server `DEFAULT` now annotate `# has DB default` in the base model so the `Optional[T] = None` pattern is no longer unexplained.
+- **`pull` empty output** (`cmd/pg-flux`): "Wrote 0 object(s) to " → "No undeclared objects found — nothing to pull." (and correctly shows the output path when objects are written).
+- **`inspect` conflict warning** (`cmd/pg-flux`): now prints a note when writing to `schema/tables/` so users know to check for duplicate-table conflicts with existing schema files.
+
+### Improved
+
+- **`gen --lang` flag** (`cmd/pg-flux`): description now lists all four supported languages: `go,ts,python,rust` (was `go,ts`).
+- **Global flags declutter** (`cmd/pg-flux`): 7 advanced / rarely-used flags hidden from `--help` (`--shadow-semantic`, `--shadow-equivalence`, `--validate-plpgsql`, `--validate-sql`, `--append-validate-not-valid`, `--set-not-null-reltuple-hint`, `--log-format`) — still functional when passed explicitly; reduces noise for new users.
+- **Next-step hints** (`cmd/pg-flux`): `migrate generate` prints `Next: pg-flux migrate apply`; `migrate apply` prints `Next: pg-flux gen (refresh generated types)` after applying one or more migrations.
+- **`gen` summary message** (`pkg/codegen`): `[go] wrote 1, skipped 0 (already up to date)` → `[go] wrote 1 file(s)` — cleaner output.
+
+### Docs
+
+- **`codegen-go.md`** (new): comprehensive Go codegen reference — all config options, full PG→Go type mapping, struct tags (sqlx/gorm/bun/ent), enums with Scan/Value, ORM integration examples, generated file structure.
+- **`codegen-ts.md`** (new): comprehensive TypeScript codegen reference — all 11 options, branded IDs, null_style/enum_style modes, Zod validators, insert/update helpers, json_shapes, generated file structure.
+- **9 existing doc pages updated**: `cli-overview.md` (exit code 5), `cli-migrate.md` (--dry-run, 30s advisory lock), `cli-gen.md` (python/rust languages), `codegen.md` (4-language table), `configuration.md` (Python/Rust examples, config key validation), `codegen-python.md` (frozen→from_attributes fix, ORM always-on), `installation.md` (Windows binaries, v0.1.5), `troubleshooting.md` (advisory lock retry, config key warning), `footer.tsx` (Python/Rust/Examples links).
+
 ## [0.1.4] — 2026-05-24
 
 ### Added
