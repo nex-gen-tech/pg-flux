@@ -16,22 +16,38 @@ import (
 // the state recorded in a pending migration's "pg-flux-baseline-hash" header.
 // Pass --force-after-drift to bypass.
 type BaselineDriftError struct {
-	Filename       string
-	ExpectedHash   string
-	LiveHash       string
-	HasBaseline    bool // false when the file was written by an older pg-flux without the header
+	Filename     string
+	ExpectedHash string
+	LiveHash     string
+	HasBaseline  bool // false when the file was written by an older pg-flux without the header
+	// OutOfOrder is true when the pending migration sorts before the last applied
+	// migration by filename (timestamp). This is the typical fingerprint of
+	// parallel-branch development rather than manual out-of-band schema changes.
+	OutOfOrder bool
 }
 
 func (e *BaselineDriftError) Error() string {
 	if !e.HasBaseline {
-		// Should never be returned in this case; we only construct one on mismatch.
 		return fmt.Sprintf("baseline drift for %s (missing header)", e.Filename)
+	}
+	if e.OutOfOrder {
+		return fmt.Sprintf(
+			"refusing to apply %s: this migration was generated before other changes were applied "+
+				"(expected baseline=%s, live=%s).\n"+
+				"This is a parallel-development conflict: two branches were developed against the same\n"+
+				"schema state and another branch was deployed first. To fix:\n"+
+				"  1. Pull the latest migrations from your main branch.\n"+
+				"  2. Run `pg-flux migrate apply` on your local DB to bring it up to date.\n"+
+				"  3. Run `pg-flux migrate rebase` to regenerate this migration on top of current state.\n"+
+				"  4. Commit the updated migration file and re-open your PR.\n"+
+				"Or pass --force-after-drift to skip this check (only safe when you have reviewed the DDL).",
+			e.Filename, shortHash(e.ExpectedHash), shortHash(e.LiveHash))
 	}
 	return fmt.Sprintf(
 		"refusing to apply %s: live database state has drifted since this migration was generated "+
-			"(expected baseline=%s, live=%s). "+
-			"Someone or something modified the schema outside pg-flux between generate and apply. "+
-			"Re-run `pg-flux migrate generate` to rebase the migration, or pass --force-after-drift to apply anyway",
+			"(expected baseline=%s, live=%s).\n"+
+			"The schema was modified outside pg-flux between generate and apply.\n"+
+			"Re-run `pg-flux migrate generate` to rebase the migration, or pass --force-after-drift to apply anyway.",
 		e.Filename, shortHash(e.ExpectedHash), shortHash(e.LiveHash))
 }
 
@@ -75,7 +91,11 @@ func extractBaselineHash(content []byte) string {
 // will never match hashstate.OfSchemaState(live), so we also accept it when
 // ContentHashOfMigration(content) matches — indicating the user reviewed and
 // accepted the edit.
-func checkBaselineDrift(ctx context.Context, pool *pgxpool.Pool, schemas []string, firstPendingName string, firstPendingContent []byte) error {
+//
+// isOutOfOrder signals that this pending file has an earlier timestamp than the
+// last applied migration — the hallmark of parallel-branch development. The error
+// message is tailored accordingly.
+func checkBaselineDrift(ctx context.Context, pool *pgxpool.Pool, schemas []string, firstPendingName string, firstPendingContent []byte, isOutOfOrder bool) error {
 	expected := extractBaselineHash(firstPendingContent)
 	if expected == "" {
 		// No baseline header — older file, hand-written, or generated before this feature.
@@ -103,5 +123,6 @@ func checkBaselineDrift(ctx context.Context, pool *pgxpool.Pool, schemas []strin
 		ExpectedHash: expected,
 		LiveHash:     liveHash,
 		HasBaseline:  true,
+		OutOfOrder:   isOutOfOrder,
 	}
 }

@@ -2,6 +2,8 @@ package migrate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -38,6 +40,9 @@ type ApplyOptions struct {
 	// apply when the live DB no longer matches the state the first pending migration
 	// was generated against. Default false: refuse on drift.
 	ForceAfterDrift bool
+	// AdvisoryLockTimeout is how long to wait to acquire the per-database advisory
+	// lock before failing. 0 defaults to 30 seconds. Use -1 to disable locking.
+	AdvisoryLockTimeout time.Duration
 }
 
 // ApplyResult summarises what was done.
@@ -53,8 +58,20 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 	if opts.TrackingSchema == "" {
 		opts.TrackingSchema = defaultTrackingSchema
 	}
+	if opts.AdvisoryLockTimeout == 0 {
+		opts.AdvisoryLockTimeout = 30 * time.Second
+	}
 
 	if !opts.DryRun {
+		// Acquire a session-level advisory lock before creating the tracking table or
+		// reading applied state. This prevents two concurrent `migrate apply` runs from
+		// racing on schema creation and from both deciding to apply the same file.
+		if opts.AdvisoryLockTimeout > 0 {
+			if err := acquireMigrateAdvisoryLock(ctx, pool, opts.TrackingSchema, opts.AdvisoryLockTimeout, opts.Progress); err != nil {
+				return nil, err
+			}
+		}
+
 		if err := EnsureTrackingTable(ctx, pool, opts.TrackingSchema); err != nil {
 			return nil, err
 		}
@@ -73,6 +90,16 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 		}
 	} else {
 		applied = make(map[string]string)
+	}
+
+	// Detect out-of-order migrations: a pending file whose timestamp sorts before the
+	// last applied migration. This is the fingerprint of parallel-branch development
+	// where another dev's PR merged and deployed before ours.
+	lastApplied := ""
+	for fname := range applied {
+		if fname > lastApplied {
+			lastApplied = fname
+		}
 	}
 
 	res := &ApplyResult{}
@@ -108,6 +135,19 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 			continue
 		}
 
+		// Out-of-order detection: this pending file has an earlier timestamp than
+		// the last applied migration. This is the hallmark of parallel-branch
+		// development where another developer's PR merged and deployed before ours.
+		if lastApplied != "" && base < lastApplied {
+			logf(opts.Progress,
+				"warning: out-of-order migration %s (last applied: %s)\n"+
+					"  This migration was generated before %s was applied, which typically\n"+
+					"  means two branches were developed in parallel. You likely need to\n"+
+					"  run `pg-flux migrate rebase` to regenerate this migration on top of\n"+
+					"  the current database state.\n",
+				base, lastApplied, lastApplied)
+		}
+
 		if opts.DryRun {
 			logf(opts.Progress, "would apply  %s\n", base)
 			res.Applied = append(res.Applied, base)
@@ -125,7 +165,10 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 				if len(schemas) == 0 {
 					schemas = []string{"public"}
 				}
-				if err := checkBaselineDrift(ctx, pool, schemas, base, content); err != nil {
+				// Pass whether this is an out-of-order file so the error message
+				// can give more helpful context about parallel-branch development.
+				isOutOfOrder := lastApplied != "" && base < lastApplied
+				if err := checkBaselineDrift(ctx, pool, schemas, base, content, isOutOfOrder); err != nil {
 					obs.ErrorCtx(ctx, "migrate.drift_detected",
 						"file", base,
 						"error", err.Error(),
@@ -536,5 +579,42 @@ func migrationFiles(dir string) ([]string, error) {
 func logf(w io.Writer, format string, args ...any) {
 	if w != nil {
 		fmt.Fprintf(w, format, args...)
+	}
+}
+
+// acquireMigrateAdvisoryLock acquires a session-level advisory lock scoped to the
+// pg-flux migrations for a given tracking schema. This prevents two concurrent
+// `migrate apply` invocations from racing on tracking-table creation or applying
+// the same migration twice. The lock is released automatically when the connection
+// is returned to the pool (session ends).
+//
+// Lock ID is derived from the string "pg-flux-migrate:" + trackingSchema so
+// different tracking schemas on the same DB do not contend with each other.
+func acquireMigrateAdvisoryLock(ctx context.Context, pool *pgxpool.Pool, trackingSchema string, timeout time.Duration, progress io.Writer) error {
+	h := sha256.Sum256([]byte("pg-flux-migrate:" + trackingSchema))
+	lockID := int64(binary.BigEndian.Uint64(h[:8]))
+
+	deadline := time.Now().Add(timeout)
+	for {
+		var ok bool
+		err := pool.QueryRow(ctx, `SELECT pg_try_advisory_lock($1::bigint)`, lockID).Scan(&ok)
+		if err != nil {
+			return fmt.Errorf("advisory lock: %w", err)
+		}
+		if ok {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"could not acquire pg-flux migration lock after %.0fs — another `migrate apply` may be running.\n"+
+					"To release manually: SELECT pg_advisory_unlock(%d);",
+				timeout.Seconds(), lockID)
+		}
+		logf(progress, "waiting for migration lock...\n")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
 	}
 }

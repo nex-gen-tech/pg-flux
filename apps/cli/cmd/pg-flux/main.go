@@ -508,7 +508,7 @@ func cmdMigrate() *cobra.Command {
 		Use:   "migrate",
 		Short: "Manage timestamped migration files",
 	}
-	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus(), cmdMigrateRepair(), cmdMigrateBaseline(), cmdMigrateRehash(), cmdMigrateRollback())
+	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus(), cmdMigrateRepair(), cmdMigrateBaseline(), cmdMigrateRehash(), cmdMigrateRollback(), cmdMigrateRebase())
 	return m
 }
 
@@ -1591,6 +1591,75 @@ func cmdMigrateRollback() *cobra.Command {
 	c.Flags().IntVar(&n, "n", 1, "number of migrations to roll back")
 	c.Flags().BoolVar(&dry, "dry-run", false, "show what would be rolled back without executing")
 	return c
+}
+
+func cmdMigrateRebase() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rebase",
+		Short: "Regenerate pending migrations against the current database state",
+		Long: "Rebase regenerates all unapplied migration files against the current live\n" +
+			"database state. Use this after pulling a colleague's migrations that were\n" +
+			"applied to a shared environment while your own migrations were pending.\n" +
+			"\n" +
+			"Typical multi-developer workflow\n" +
+			"---------------------------------\n" +
+			"  Dev A and Dev B both branch from the same schema state and generate migrations.\n" +
+			"  Dev A's PR merges first; on staging, Dev A's migration is applied.\n" +
+			"  Dev B pulls main and runs:\n" +
+			"\n" +
+			"    pg-flux migrate apply   # applies Dev A's migration to local DB\n" +
+			"    pg-flux migrate rebase  # regenerates Dev B's pending migration on top\n" +
+			"    git add migrations/ && git commit -m \"rebase migration\"\n" +
+			"\n" +
+			"After rebase, Dev B's migration file has an updated baseline-hash that matches\n" +
+			"the current DB state (after Dev A's changes), so 'migrate apply' will succeed\n" +
+			"without --force-after-drift.\n" +
+			"\n" +
+			"When multiple pending files exist, rebase folds all their changes into the\n" +
+			"first (earliest-timestamp) file and removes the rest. Commit both the updated\n" +
+			"first file and the removed files.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+
+			des, err := loadDesired()
+			if err != nil {
+				return err
+			}
+
+			res, err := migrate.Rebase(ctx, pool, des, migrate.RebaseOptions{
+				MigrationsDir:  migrationsDir,
+				Schemas:        parseSchemas(),
+				AllowHazards:   allowHaz,
+				Differ:         differOptionsFromFlags(),
+				TrackingSchema: trackingSchema,
+			})
+			if err != nil {
+				return err
+			}
+
+			if len(res.Rebased) == 0 && len(res.Unchanged) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No pending migrations to rebase.")
+				return nil
+			}
+			for _, f := range res.Rebased {
+				fmt.Fprintf(cmd.OutOrStdout(), "rebased  %s\n", f)
+			}
+			for _, f := range res.Unchanged {
+				fmt.Fprintf(cmd.OutOrStdout(), "unchanged %s\n", f)
+			}
+			if len(res.Rebased) > 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "Next: review the updated migration file, then run pg-flux migrate apply")
+			}
+			return nil
+		},
+	}
 }
 
 func cmdMigrateRehash() *cobra.Command {
