@@ -2,12 +2,14 @@
 title: Installation
 group: Getting started
 order: 2
-description: Get pg-flux on your machine — Go install, binary, Docker, or build from source.
+description: Get pg-flux on your machine — binary download, Go install, Docker, or build from source. Full Windows, macOS, and Linux coverage.
 ---
 
-Pick the install path that matches your taste. All of them give you the same `pg-flux` binary; the differences are just how you get there.
+Pick the install path that matches your platform and taste. All of them give you the same `pg-flux` binary.
 
-## Quick install (recommended)
+---
+
+## macOS / Linux — quick install (recommended)
 
 One command. No Go required.
 
@@ -24,86 +26,135 @@ What it does:
 5. Extracts and installs to `/usr/local/bin/pg-flux` (or `~/.local/bin` if `/usr/local/bin` isn't writable).
 6. Runs `pg-flux version` to confirm.
 
-Verify:
-
 ```bash
 $ pg-flux version
 pg-flux v0.1.5
 ```
 
 > [!TIP]
-> Pin to a specific version: `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | PGFLUX_VERSION=v0.1.5 sh`.
-> Override the install directory: `... | PGFLUX_BIN_DIR=$HOME/.local/bin sh`.
+> Pin to a specific version: `curl -sSfL https://... | PGFLUX_VERSION=v0.1.5 sh`
+> Override the install dir: `... | PGFLUX_BIN_DIR=$HOME/.local/bin sh`
 
-## Manual binary download
+---
 
-If you'd rather not pipe a script into your shell, grab the binary directly from [GitHub Releases](https://github.com/nex-gen-tech/pg-flux/releases).
+## Windows
 
-```bash
-# macOS Apple Silicon
-curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-darwin-arm64.tar.gz
-tar -xzf pg-flux.tar.gz
-sudo mv pg-flux /usr/local/bin/
+### Option A — PowerShell one-liner (recommended)
+
+Run in **PowerShell 5+** or **Windows Terminal**:
+
+```powershell
+# Installs to $HOME\.local\bin and adds it to your user PATH
+$InstallDir = "$env:USERPROFILE\.local\bin"
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+$Release = (Invoke-RestMethod "https://api.github.com/repos/nex-gen-tech/pg-flux/releases/latest").tag_name
+$Arch = if ([System.Environment]::Is64BitOperatingSystem -and $env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
+$Zip = "pg-flux-windows-$Arch.zip"
+$Url = "https://github.com/nex-gen-tech/pg-flux/releases/latest/download/$Zip"
+
+Invoke-WebRequest -Uri $Url -OutFile "$env:TEMP\$Zip"
+Expand-Archive -Path "$env:TEMP\$Zip" -DestinationPath "$env:TEMP\pg-flux-extracted" -Force
+Copy-Item "$env:TEMP\pg-flux-extracted\pg-flux.exe" -Destination "$InstallDir\pg-flux.exe" -Force
+
+# Add to user PATH (permanent, no admin required)
+$UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ($UserPath -notlike "*$InstallDir*") {
+    [Environment]::SetEnvironmentVariable("PATH", "$UserPath;$InstallDir", "User")
+    $env:PATH += ";$InstallDir"
+}
+
 pg-flux version
-
-# macOS Intel
-curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-darwin-amd64.tar.gz
-tar -xzf pg-flux.tar.gz
-sudo mv pg-flux /usr/local/bin/
-
-# Linux x86_64
-curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-linux-amd64.tar.gz
-tar -xzf pg-flux.tar.gz
-sudo mv pg-flux /usr/local/bin/
-
-# Linux ARM64
-curl -sSfL -o pg-flux.tar.gz https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-linux-arm64.tar.gz
-tar -xzf pg-flux.tar.gz
-sudo mv pg-flux /usr/local/bin/
-
-# Windows x86_64 (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-windows-amd64.zip" -OutFile pg-flux-windows-amd64.zip
-Expand-Archive pg-flux-windows-amd64.zip
-Move-Item pg-flux-windows-amd64\pg-flux.exe C:\Windows\System32\
-pg-flux version
-
-# Windows ARM64 (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/nex-gen-tech/pg-flux/releases/latest/download/pg-flux-windows-arm64.zip" -OutFile pg-flux-windows-arm64.zip
-Expand-Archive pg-flux-windows-arm64.zip
-Move-Item pg-flux-windows-arm64\pg-flux.exe C:\Windows\System32\
-```
-
-Always verify the checksum if you download manually:
-
-```bash
-curl -sSfL -o SHA256SUMS https://github.com/nex-gen-tech/pg-flux/releases/latest/download/SHA256SUMS
-shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
 > [!NOTE]
-> Supported platforms: `darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`, `windows-amd64`, `windows-arm64`. Windows builds use precompiled libpg_query; CGO is not required on Windows.
+> No admin rights required. The binary installs to your user profile and PATH is updated only for your account. Restart your terminal after install to pick up the PATH change in new windows.
 
-## Go install
+### Option B — Winget (coming soon)
 
-If you already have Go 1.25+ and would rather build the binary yourself:
+```powershell
+winget install nex-gen-tech.pg-flux
+```
+
+The Winget manifest is in progress. Watch the [GitHub Releases](https://github.com/nex-gen-tech/pg-flux/releases) page for updates.
+
+### Option C — Manual download
+
+1. Go to [GitHub Releases](https://github.com/nex-gen-tech/pg-flux/releases/latest).
+2. Download `pg-flux-windows-amd64.zip` (Intel/AMD) or `pg-flux-windows-arm64.zip` (ARM/Snapdragon).
+3. Extract the zip — it contains a single `pg-flux.exe`.
+4. Move `pg-flux.exe` somewhere on your `PATH`, for example:
+   - `%USERPROFILE%\.local\bin\` (user-local, no admin)
+   - `C:\Program Files\pg-flux\` (system-wide, requires admin)
+5. If the destination isn't on your `PATH` yet, add it:
+
+```powershell
+# User PATH — no admin required
+$dir = "$env:USERPROFILE\.local\bin"
+$cur = [Environment]::GetEnvironmentVariable("PATH", "User")
+[Environment]::SetEnvironmentVariable("PATH", "$cur;$dir", "User")
+```
+
+### Verify the checksum (optional but recommended)
+
+```powershell
+$SumsUrl = "https://github.com/nex-gen-tech/pg-flux/releases/latest/download/SHA256SUMS"
+Invoke-WebRequest -Uri $SumsUrl -OutFile "$env:TEMP\SHA256SUMS"
+
+$Expected = (Get-Content "$env:TEMP\SHA256SUMS" | Select-String "windows-amd64").ToString().Split(" ")[0]
+$Actual   = (Get-FileHash "$env:USERPROFILE\.local\bin\pg-flux.exe" -Algorithm SHA256).Hash.ToLower()
+
+if ($Expected -eq $Actual) { Write-Host "Checksum OK" } else { Write-Warning "Checksum mismatch!" }
+```
+
+### WSL2 (easiest for developers)
+
+If you already use WSL2 (Windows Subsystem for Linux), the macOS/Linux install path works unchanged inside your WSL terminal:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | sh
+```
+
+WSL2 gives you the exact same experience as Linux — including running PostgreSQL natively in the WSL environment. Most Windows developers working with pg-flux use WSL2.
+
+> [!TIP]
+> PostgreSQL in WSL2: `sudo apt install postgresql` then connect with `postgres://localhost/yourdb`.
+> The pg-flux binary installed in WSL2 is separate from the Windows binary — pick one or the other.
+
+---
+
+## Go install (all platforms)
+
+If you already have Go 1.22+ installed:
 
 ```bash
 go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 ```
 
-The binary lands in `$GOBIN` (or `$GOPATH/bin` if `GOBIN` isn't set). Make sure that directory is on your `PATH`:
+The binary lands in `$GOBIN`. Make sure that directory is on your `PATH`:
 
+**macOS / Linux:**
 ```bash
-# add to your shell rc
-export PATH="$PATH:$(go env GOBIN):$(go env GOPATH)/bin"
+# add to ~/.bashrc or ~/.zshrc
+export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Pin to a specific tag with `@v0.1.5` instead of `@latest`.
+**Windows (PowerShell):**
+```powershell
+$GoBin = go env GOPATH | Join-Path -ChildPath "bin"
+$cur = [Environment]::GetEnvironmentVariable("PATH", "User")
+[Environment]::SetEnvironmentVariable("PATH", "$cur;$GoBin", "User")
+```
+
+Pin to a specific version with `@v0.1.5` instead of `@latest`.
+
+---
 
 ## From source
 
-If you want to build from source — for development, custom patches, or to verify the binary you're using matches HEAD:
+For development, custom patches, or to verify the binary matches HEAD:
 
+**macOS / Linux:**
 ```bash
 git clone https://github.com/nex-gen-tech/pg-flux.git
 cd pg-flux/apps/cli
@@ -111,13 +162,32 @@ go build -o pg-flux ./cmd/pg-flux
 ./pg-flux version
 ```
 
-The build takes ~30 seconds on a modern machine. No CGO required (with one exception — see below).
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/nex-gen-tech/pg-flux.git
+cd pg-flux\apps\cli
+go build -o pg-flux.exe .\cmd\pg-flux
+.\pg-flux.exe version
+```
 
 > [!NOTE]
-> The `pg_query_go/v6` dependency includes a libpg_query C library that
-> needs CGO at build time. Make sure your environment has `gcc` or `clang`
-> installed. On most systems this is automatic; on slim Docker images
-> you may need to add `build-essential`.
+> **CGO is required.** pg-flux links against `libpg_query` for SQL parsing.
+>
+> | Platform | Toolchain |
+> |---|---|
+> | macOS | Xcode Command Line Tools (`xcode-select --install`) |
+> | Linux | `gcc` (`apt install build-essential` or equivalent) |
+> | Windows | MSYS2 + MinGW-w64 (see below) or LLVM/Clang |
+>
+> **Windows toolchain setup:**
+> 1. Install [MSYS2](https://www.msys2.org/)
+> 2. In the MSYS2 shell: `pacman -S mingw-w64-x86_64-gcc`
+> 3. Add `C:\msys64\mingw64\bin` to your `PATH`
+> 4. In a new PowerShell: `go build -o pg-flux.exe .\cmd\pg-flux`
+>
+> Pre-built binaries from GitHub Releases do **not** require CGO or any C toolchain to run — only building from source does.
+
+---
 
 ## Docker (coming in v0.2)
 
@@ -132,14 +202,18 @@ COPY --from=pgflux /go/bin/pg-flux /usr/local/bin/
 ENTRYPOINT ["pg-flux"]
 ```
 
-## Verify
+---
+
+## Verify installation
 
 ```bash
 pg-flux version
 pg-flux --help
 ```
 
-`--help` prints the full command tree and every global flag. If you ever forget a flag, this is faster than the docs.
+`--help` prints the full command tree. If you ever forget a flag, this is faster than the docs.
+
+---
 
 ## PostgreSQL requirements
 
@@ -147,18 +221,20 @@ pg-flux supports PostgreSQL **14 through 18**. Anything older isn't tested or su
 
 | PG version | Status | Notable features pg-flux uses |
 |---|---|---|
-| **14** | Supported | LZ4 compression, multirange types, named NOT VALID — basic baseline |
-| **15** | Supported | NULLS NOT DISTINCT, security_invoker views, MERGE (DML, not directly used) |
-| **16** | Supported | Inline STORAGE in CREATE TABLE, MAINTAIN privilege |
-| **17** | Supported | WITHOUT OVERLAPS / PERIOD FK, event-trigger reindex events |
-| **18** | Supported | Virtual generated columns, NOT ENFORCED constraints, named NOT NULL ... NOT VALID |
-| **13 and earlier** | NOT supported | Missing features pg-flux relies on |
+| **14** | Supported | LZ4 compression, multirange types |
+| **15** | Supported | NULLS NOT DISTINCT, security_invoker views |
+| **16** | Supported | Inline STORAGE in CREATE TABLE |
+| **17** | Supported | WITHOUT OVERLAPS / PERIOD FK |
+| **18** | Supported | Virtual generated columns, NOT ENFORCED constraints |
+| **13 and earlier** | NOT supported | — |
 
-pg-flux detects the server version on connect and gates version-specific syntax. Trying to use a PG18 feature against PG14 fails at `migrate generate` time with a clear error, not at apply.
+pg-flux detects the server version on connect and gates version-specific syntax automatically.
+
+---
 
 ## Optional: shadow database
 
-Some commands (`migrate apply --shadow-dsn`) accept a disposable database for pre-flight validation. Spin one up with Docker:
+Some commands (`migrate apply --shadow-dsn`) accept a disposable database for pre-flight validation:
 
 ```bash
 docker run -d --name pgflux-shadow \
@@ -168,29 +244,33 @@ docker run -d --name pgflux-shadow \
   postgres:17
 ```
 
-Then in your environment:
-
 ```bash
 export PGFLUX_SHADOW_DSN="postgres://shadow:shadow@localhost:5433/shadow?sslmode=disable"
 ```
 
-pg-flux will use this for shadow-validation when `--shadow-dsn` is passed (or the env var is set, depending on the command).
+**Windows (PowerShell):**
+```powershell
+$env:PGFLUX_SHADOW_DSN = "postgres://shadow:shadow@localhost:5433/shadow?sslmode=disable"
+```
+
+---
 
 ## Optional: development tooling
 
-For working on pg-flux itself (not just using it):
+For working on pg-flux itself:
 
 | Tool | Purpose |
 |---|---|
-| **Docker** | Spin up PG 14, 15, 16, 17, 18 containers for the matrix harness |
+| **Docker** | Spin up PG 14–18 containers for the matrix harness |
 | **`psql`** | Required by the matrix harness |
 | **Bun 1.3+** | Build the docs site |
-| **`entr`** | Optional, for auto-rebuild on file changes |
+| **MSYS2 + MinGW-w64** | Required to build from source on Windows |
 
 The full dev setup is documented in [CONTRIBUTING.md](https://github.com/nex-gen-tech/pg-flux/blob/main/CONTRIBUTING.md).
 
+---
+
 ## What's next?
 
-- [Quick start →](/docs/quick-start.html) — the 5-minute version of "actually using pg-flux"
+- [Quick start →](/docs/quick-start.html) — the 5-minute version of actually using pg-flux
 - [Configuration →](/docs/configuration.html) — what goes in `.pg-flux.yml`
-- [Privileges →](/docs/privileges.html) — what DB permissions pg-flux needs

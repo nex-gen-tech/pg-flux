@@ -44,12 +44,20 @@ jobs:
             goos: windows
             goarch: amd64
             binary: pg-flux.exe
+            # CGO cross-compile: mingw-w64 provides x86_64-w64-mingw32-gcc
+            mingw_pkg: gcc-mingw-w64-x86-64
+            cc: x86_64-w64-mingw32-gcc
           - os_name: windows
             arch: arm64
             runner: ubuntu-latest
             goos: windows
             goarch: arm64
             binary: pg-flux.exe
+            # CGO cross-compile: llvm-mingw provides aarch64-w64-mingw32-clang
+            # Install via the llvm-mingw tarball since apt doesn't ship it.
+            mingw_pkg: ""
+            cc: aarch64-w64-mingw32-clang
+            use_llvm_mingw: true
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -70,6 +78,20 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: install Windows cross-compiler (amd64)
+        if: matrix.mingw_pkg != '' && matrix.mingw_pkg != null
+        run: sudo apt-get install -y ${{ matrix.mingw_pkg }}
+
+      - name: install Windows cross-compiler (arm64 via llvm-mingw)
+        if: matrix.use_llvm_mingw == true
+        run: |
+          # llvm-mingw provides aarch64-w64-mingw32-clang for Windows/ARM64 cross-builds.
+          LLVM_MINGW_VER="20240619"
+          curl -sSfL -o /tmp/llvm-mingw.tar.gz \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VER}/llvm-mingw-${LLVM_MINGW_VER}-ucrt-ubuntu-20.04-x86_64.tar.gz"
+          sudo tar -xzf /tmp/llvm-mingw.tar.gz -C /opt
+          echo "/opt/llvm-mingw-${LLVM_MINGW_VER}-ucrt-ubuntu-20.04-x86_64/bin" >> "$GITHUB_PATH"
+
       - name: build
         working-directory: apps/cli
         env:
@@ -81,10 +103,13 @@ jobs:
           BINARY="${{ matrix.binary || 'pg-flux' }}"
           OUT="../../dist/$BINARY"
 
-          # If the matrix entry asks for an arch-specific CC, wrap clang so cgo
-          # passes "-arch <arch>" to every C compile + link invocation. Apple's
-          # clang on Apple Silicon supports both x86_64 and arm64 codegen
-          # natively, so darwin-amd64 cross-builds from a macos-14 runner.
+          # Windows cross-compile: set CC to the mingw/llvm-mingw compiler.
+          if [ -n "${{ matrix.cc }}" ]; then
+            export CC="${{ matrix.cc }}"
+            echo "cross-compile: CC=$CC"
+          fi
+
+          # macOS amd64: wrap clang with -arch x86_64 (Apple Silicon runner).
           if [ -n "${{ matrix.cc_arch }}" ]; then
             CC_WRAP="$RUNNER_TEMP/cc-wrap"
             cat > "$CC_WRAP" <<EOF
@@ -105,7 +130,7 @@ jobs:
           file "$OUT" || true
 
           # Native runs only — cross-compiled binaries can't execute on the runner.
-          if [ -z "${{ matrix.cc_arch }}" ] && [ "${{ matrix.os_name }}" != "windows" ]; then
+          if [ -z "${{ matrix.cc_arch }}" ] && [ -z "${{ matrix.cc }}" ]; then
             "$OUT" version || true
           fi
 
