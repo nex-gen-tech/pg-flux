@@ -14,6 +14,7 @@ const GROUPS: LinkGroup[] = [
       { label: "Quick start", href: BASE + "/docs/quick-start.html" },
       { label: "Installation", href: BASE + "/docs/installation.html" },
       { label: "Migrations", href: BASE + "/docs/migrations.html" },
+      { label: "Rollback", href: BASE + "/docs/rollback.html" },
       { label: "Codegen", href: BASE + "/docs/codegen.html" },
       { label: "Python codegen", href: BASE + "/docs/codegen-python.html" },
       { label: "Rust codegen", href: BASE + "/docs/codegen-rust.html" },

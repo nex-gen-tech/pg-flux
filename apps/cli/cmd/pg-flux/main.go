@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -45,6 +46,7 @@ const (
 	exitStaleGen      = 3 // generated files stale (gen --check)
 	exitUndeclared    = 4 // undeclared objects (verify --strict)
 	exitHazardBlocked = 5 // hazard blocked apply
+	exitNoDownSQL     = 6 // rollback skipped: no Down SQL available
 )
 
 var (
@@ -69,16 +71,26 @@ var (
 	configFile       string
 	migrationsDir    string
 	trackingSchema   string
+
+	// migrate sub-config values loaded from .pg-flux.yml; checked in cmdMigrateGenerate.
+	cfgGenerateUndo  bool
+	cfgMigrateFormat string
 )
 
 // pgfluxConfig mirrors the .pg-flux.yml config file format.
 type pgfluxConfig struct {
-	Version        int      `yaml:"version"`
-	DatabaseURL    string   `yaml:"db"`
-	SchemaDir      string   `yaml:"schema_dir"`
-	TargetSchemas  []string `yaml:"target_schemas"`
-	MigrationsDir  string   `yaml:"migrations_dir"`
-	TrackingSchema string   `yaml:"tracking_schema"`
+	Version        int          `yaml:"version"`
+	DatabaseURL    string       `yaml:"db"`
+	SchemaDir      string       `yaml:"schema_dir"`
+	TargetSchemas  []string     `yaml:"target_schemas"`
+	MigrationsDir  string       `yaml:"migrations_dir"`
+	TrackingSchema string       `yaml:"tracking_schema"`
+	Migrate        migrateConfig `yaml:"migrate"`
+}
+
+type migrateConfig struct {
+	GenerateUndo bool   `yaml:"generate_undo"`
+	Format       string `yaml:"format"` // "separate" (default) | "combined"
 }
 
 // knownConfigKeys is the set of valid top-level keys in .pg-flux.yml.
@@ -90,6 +102,7 @@ var knownConfigKeys = []string{
 	"target_schemas",
 	"migrations_dir",
 	"tracking_schema",
+	"migrate",
 }
 
 // loadConfig reads a .pg-flux.yml config file. Missing file is not an error.
@@ -203,6 +216,8 @@ var (
 	errUndeclared = errors.New("verify: undeclared objects found")
 	// errHazardBlocked is returned when a hazard blocks apply.
 	errHazardBlocked = errors.New("apply: blocked by hazards")
+	// errNoDownSQL is returned by rollback when all targeted migrations lack Down SQL.
+	errNoDownSQL = errors.New("no Down SQL available for one or more migrations")
 )
 
 func main() {
@@ -220,6 +235,8 @@ func main() {
 			os.Exit(exitUndeclared)
 		case errors.Is(err, errHazardBlocked):
 			os.Exit(exitHazardBlocked)
+		case errors.Is(err, errNoDownSQL):
+			os.Exit(exitNoDownSQL)
 		default:
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(exitErr)
@@ -302,6 +319,12 @@ Exit codes:
 		}
 		if cfg.DatabaseURL != "" && !pf.Changed("db") {
 			dbURL = cfg.DatabaseURL
+		}
+		cfgGenerateUndo = cfg.Migrate.GenerateUndo
+		if cfg.Migrate.Format != "" {
+			cfgMigrateFormat = cfg.Migrate.Format
+		} else {
+			cfgMigrateFormat = "separate"
 		}
 		return nil
 	}
@@ -485,7 +508,7 @@ func cmdMigrate() *cobra.Command {
 		Use:   "migrate",
 		Short: "Manage timestamped migration files",
 	}
-	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus(), cmdMigrateRepair(), cmdMigrateBaseline(), cmdMigrateRehash())
+	m.AddCommand(cmdMigrateGenerate(), cmdMigrateApply(), cmdMigrateStatus(), cmdMigrateRepair(), cmdMigrateBaseline(), cmdMigrateRehash(), cmdMigrateRollback())
 	return m
 }
 
@@ -914,6 +937,7 @@ func cmdMigrateGenerate() *cobra.Command {
 	var label string
 	var generateUndo bool
 	var dryRun bool
+	var format string
 	c := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate a new migration file from schema diff",
@@ -951,7 +975,18 @@ func cmdMigrateGenerate() *cobra.Command {
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Generated: %s (%d statements)\n", res.Filename, len(res.Statements))
-			if generateUndo {
+			// Determine effective format and undo settings (CLI flag takes precedence over config).
+			effectiveUndo := generateUndo || cfgGenerateUndo
+			effectiveFormat := cfgMigrateFormat
+			if cmd.Flags().Changed("format") {
+				effectiveFormat = format
+			}
+			if effectiveFormat == "combined" {
+				if _, err := migrate.WriteCombinedFile(res); err != nil {
+					return fmt.Errorf("write combined file: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Format:    combined (up/down in one file)\n")
+			} else if effectiveUndo {
 				undoFile, err := migrate.WriteUndoFile(res)
 				if err != nil {
 					return fmt.Errorf("write undo file: %w", err)
@@ -965,6 +1000,7 @@ func cmdMigrateGenerate() *cobra.Command {
 	c.Flags().StringVar(&label, "label", "", "short description appended to the filename")
 	c.Flags().BoolVar(&generateUndo, "generate-undo", false, "also write a best-effort undo/rollback .sql file alongside the migration")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the generated SQL to stdout without writing a migration file")
+	c.Flags().StringVar(&format, "format", "separate", "migration file format: separate (default) or combined (up+down in one file)")
 	return c
 }
 
@@ -1038,7 +1074,7 @@ func cmdMigrateStatus() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "STATUS\tFILENAME\tAPPLIED AT")
+			fmt.Fprintln(w, "STATUS\tFILENAME\tAPPLIED AT\tDOWN")
 			for _, s := range statuses {
 				status := "pending"
 				at := ""
@@ -1046,7 +1082,12 @@ func cmdMigrateStatus() *cobra.Command {
 					status = "applied"
 					at = s.AppliedAt
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\n", status, s.Filename, at)
+				downSQL, _ := migrate.ResolveDownSQL(migrationsDir, s.Filename)
+				hasDown := "no"
+				if strings.TrimSpace(downSQL) != "" {
+					hasDown = "yes"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", status, s.Filename, at, hasDown)
 			}
 			return w.Flush()
 		},
@@ -1378,6 +1419,69 @@ func diffSummary(p *plan.ExecutionPlan) []render.Difference {
 		o = append(o, render.Difference{ObjectType: s.OpType, ObjectName: s.Object, ChangeType: s.OpType, Details: s.DDL})
 	}
 	return o
+}
+
+func cmdMigrateRollback() *cobra.Command {
+	var n int
+	var dry bool
+	c := &cobra.Command{
+		Use:           "rollback [N]",
+		Short:         "Roll back the last N applied migrations (default: 1)",
+		SilenceErrors: true,
+		Args:          cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			count := n
+			if len(args) == 1 {
+				parsed, err := strconv.Atoi(args[0])
+				if err != nil || parsed < 1 {
+					return fmt.Errorf("N must be a positive integer, got %q", args[0])
+				}
+				count = parsed
+			}
+			if count <= 0 {
+				count = 1
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			pool, err := db.NewPool(ctx, dbURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+
+			res, err := migrate.Rollback(ctx, pool, migrate.RollbackOptions{
+				MigrationsDir:  migrationsDir,
+				TrackingSchema: trackingSchema,
+				N:              count,
+				DryRun:         dry,
+				Progress:       humanWriter(cmd.OutOrStdout()),
+			})
+			if err != nil {
+				return err
+			}
+
+			if dry {
+				humanPrintf(cmd, "\nDry run: would roll back %d migration(s).\n", len(res.RolledBack))
+			} else {
+				humanPrintf(cmd, "\nRolled back %d migration(s).\n", len(res.RolledBack))
+			}
+			if len(res.NoDownSQL) > 0 {
+				humanPrintf(cmd, "Skipped %d migration(s) — no Down SQL found:\n", len(res.NoDownSQL))
+				for _, f := range res.NoDownSQL {
+					humanPrintf(cmd, "  %s\n", f)
+				}
+				humanPrintf(cmd, "Tip: re-run migrate generate with --format=combined or --generate-undo to get Down SQL.\n")
+				if len(res.RolledBack) == 0 {
+					return errNoDownSQL
+				}
+			}
+			return nil
+		},
+	}
+	c.Flags().IntVar(&n, "n", 1, "number of migrations to roll back")
+	c.Flags().BoolVar(&dry, "dry-run", false, "show what would be rolled back without executing")
+	return c
 }
 
 func cmdMigrateRehash() *cobra.Command {

@@ -93,6 +93,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 			return nil, fmt.Errorf("read %s: %w", fname, err)
 		}
 		chk := Checksum(content)
+		upSQL, _, _ := SplitUpDown(content)
 
 		if prevChk, done := applied[base]; done {
 			// Tamper detection: applied file content must match recorded checksum.
@@ -144,7 +145,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 					return nil, fmt.Errorf("shadow connect: %w", err)
 				}
 			}
-			if err := shadow.ValidateMigrationSQL(ctx, shadowPool, base, content); err != nil {
+			if err := shadow.ValidateMigrationSQL(ctx, shadowPool, base, []byte(upSQL)); err != nil {
 				return nil, fmt.Errorf("shadow validate %s: %w", base, err)
 			}
 			logf(opts.Progress, "        ok (shadow)\n")
@@ -152,7 +153,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, opts ApplyOptions) (*ApplyRe
 
 		logf(opts.Progress, "apply %s ...\n", base)
 		start := time.Now()
-		if err := applyOne(ctx, pool, opts.TrackingSchema, base, content, chk); err != nil {
+		if err := applyOne(ctx, pool, opts.TrackingSchema, base, []byte(upSQL), chk); err != nil {
 			obs.ErrorCtx(ctx, "migrate.apply.failed",
 				"file", base,
 				"error", err.Error(),
@@ -519,6 +520,9 @@ func migrationFiles(dir string) ([]string, error) {
 	var files []string
 	for _, e := range entries {
 		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), "_undo.sql") {
 			continue
 		}
 		if strings.HasSuffix(e.Name(), ".sql") {

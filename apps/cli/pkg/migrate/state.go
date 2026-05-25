@@ -61,6 +61,35 @@ func AppliedSet(ctx context.Context, pool *pgxpool.Pool, trackingSchema string) 
 	return out, rows.Err()
 }
 
+// AppliedOrdered returns the filenames of the most-recently-applied migrations,
+// newest first. limit <= 0 means no limit.
+func AppliedOrdered(ctx context.Context, pool *pgxpool.Pool, trackingSchema string, limit int) ([]string, error) {
+	if trackingSchema == "" {
+		trackingSchema = defaultTrackingSchema
+	}
+	q := fmt.Sprintf(`SELECT filename FROM %s.migrations ORDER BY applied_at DESC, filename DESC`,
+		quoteIdent(trackingSchema))
+	args := []any{}
+	if limit > 0 {
+		q += ` LIMIT $1`
+		args = append(args, limit)
+	}
+	rows, err := pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query applied ordered: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var fname string
+		if err := rows.Scan(&fname); err != nil {
+			return nil, err
+		}
+		out = append(out, fname)
+	}
+	return out, rows.Err()
+}
+
 // Checksum returns the hex-encoded SHA-256 of content.
 func Checksum(content []byte) string {
 	h := sha256.Sum256(content)

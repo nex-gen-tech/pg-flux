@@ -2,7 +2,7 @@
 title: Migration commands
 group: Reference
 order: 2
-description: pg-flux migrate generate / apply / status / repair / baseline.
+description: pg-flux migrate generate / apply / status / repair / baseline / rollback.
 ---
 
 ## `pg-flux migrate generate`
@@ -10,14 +10,15 @@ description: pg-flux migrate generate / apply / status / repair / baseline.
 Inspect the live database, diff against `schema/`, and write a timestamped `.sql` migration file.
 
 ```bash
-pg-flux migrate generate [--label NAME] [--generate-undo]
+pg-flux migrate generate [--label NAME] [--generate-undo] [--format separate|combined]
 ```
 
 | Flag | Description |
 |---|---|
 | `--dry-run` | Print the SQL to stdout without writing any file |
 | `--label <text>` | Appended to the timestamped filename: `20260520_103245_<label>.sql` |
-| `--generate-undo` | Also write a best-effort reverse-migration alongside |
+| `--generate-undo` | Also write a best-effort reverse-migration as a separate `_undo.sql` file |
+| `--format <fmt>` | Migration file format: `separate` (default) or `combined` (single file with `-- +migrate Up` / `-- +migrate Down` sections) |
 
 The generated file embeds a `pg-flux-baseline-hash` header so `apply` can detect drift.
 
@@ -87,7 +88,71 @@ Applied 1 migration(s), 0 already up to date.
 pg-flux migrate status
 ```
 
-Lists every file in `migrations/` with its applied/pending state and apply timestamp.
+Lists every file in `migrations/` with its applied/pending state, apply timestamp, and whether Down SQL is available.
+
+```bash
+$ pg-flux migrate status
+  migration                                    applied_at            down
+  20260518_140330_initial_schema.sql           2026-05-18 14:03:30   no
+  20260519_091012_add_posts_table.sql          2026-05-19 09:10:12   yes
+  20260520_103245_add_users_phone.sql          2026-05-20 10:32:45   yes
+  20260521_083011_add_audit_table.sql          (pending)             yes
+```
+
+The `down` column shows `yes` when the migration file contains a `-- +migrate Down` section (combined format) or a matching `_undo.sql` file (separate format). Pending migrations with Down SQL will be rolled back if applied and then rolled back.
+
+---
+
+## `pg-flux migrate rollback`
+
+Roll back the last N applied migrations by executing the Down SQL embedded in each file and removing the tracking row.
+
+```bash
+pg-flux migrate rollback [N] [--dry-run]
+```
+
+`N` is a positional argument that defaults to `1`.
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Print what would be rolled back without touching the database |
+
+Migrations are rolled back in reverse-apply order (most recent first). Migrations with no Down SQL are skipped with a tip message. If all requested migrations are skipped, pg-flux exits with code **6**.
+
+Each rollback runs inside a transaction. On failure the transaction is rolled back and the tracking row is left intact — the migration stays marked as applied.
+
+> [!TIP]
+> Use `--dry-run` to inspect the Down SQL before committing to a rollback:
+> ```bash
+> $ pg-flux migrate rollback --dry-run
+> -- dry-run: would roll back 1 migration(s), no changes made
+>
+> 20260520_103245_add_users_phone.sql:
+>   DROP INDEX idx_users_phone;
+>   ALTER TABLE users DROP COLUMN phone;
+> ```
+
+### Examples
+
+```bash
+# Roll back the most recently applied migration
+$ pg-flux migrate rollback
+rolling back 20260520_103245_add_users_phone.sql ...
+      ok
+Rolled back 1 migration(s).
+
+# Roll back the last 3 migrations
+$ pg-flux migrate rollback 3
+rolling back 20260520_103245_add_users_phone.sql ...
+      ok
+rolling back 20260519_091012_add_posts_table.sql ...
+      ok
+rolling back 20260518_140330_initial_schema.sql ...
+      ok
+Rolled back 3 migration(s).
+```
+
+See the [Rollback guide →](/docs/rollback.html) for full details on Down SQL formats, combined files, and limitations.
 
 ---
 

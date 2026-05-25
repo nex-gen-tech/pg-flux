@@ -10,6 +10,34 @@ import (
 	"github.com/nex-gen-tech/pg-flux/pkg/plan"
 )
 
+// ResolveDownSQL returns the Down SQL for a given migration filename.
+// Checks in order:
+//  1. Combined format: parse the migration file itself for a -- +migrate Down section
+//  2. Separate format: look for <basename without .sql>_undo.sql in migrationsDir
+//
+// Returns ("", nil) when no Down SQL is available (not an error).
+func ResolveDownSQL(migrationsDir, filename string) (string, error) {
+	fwdPath := filepath.Join(migrationsDir, filename)
+	content, err := os.ReadFile(fwdPath)
+	if err == nil {
+		_, downSQL, isCombined := SplitUpDown(content)
+		if isCombined && downSQL != "" {
+			return downSQL, nil
+		}
+	}
+
+	undoBase := strings.TrimSuffix(filename, ".sql") + "_undo.sql"
+	undoPath := filepath.Join(migrationsDir, undoBase)
+	undoContent, err := os.ReadFile(undoPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read undo file %s: %w", undoPath, err)
+	}
+	return string(undoContent), nil
+}
+
 // WriteUndoFile generates an undo SQL file alongside the forward migration.
 // The undo file is named <basename>_undo.sql.
 // Returns the path of the written file.

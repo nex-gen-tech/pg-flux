@@ -15,7 +15,8 @@ pg-flux
 ├── migrate
 │   ├── generate            diff source vs live, write a .sql file
 │   ├── apply               apply pending migration files
-│   ├── status              list applied / pending
+│   ├── status              list applied / pending / down-sql availability
+│   ├── rollback [N]        roll back the last N applied migrations
 │   ├── repair              recompute checksums after editing applied files
 │   └── baseline FILE       mark a file as already-applied
 ├── plan                     compute diff without writing a file
@@ -58,6 +59,7 @@ Every subcommand inherits these:
 | `3` | Stale codegen detected by `gen --check` |
 | `4` | Undeclared live objects detected by `verify --strict` |
 | `5` | Hazard blocked — `migrate apply` refused a blocking hazard; re-run with `--allow-hazards` |
+| `6` | `migrate rollback` — all requested migrations had no Down SQL and were skipped |
 
 > [!TIP]
 > CI pipelines should treat any non-zero exit as a hard failure unless the

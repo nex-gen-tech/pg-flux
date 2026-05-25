@@ -4,7 +4,17 @@ All notable changes to pg-flux are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- `migrate rollback [N]` command — rolls back the last N applied migrations using embedded Down SQL
+- Combined up/down migration file format (`-- +migrate Up` / `-- +migrate Down`) for keeping forward and reverse SQL together
+- `migrate.generate_undo` config key — auto-generate Down SQL on every `migrate generate` without needing `--generate-undo` flag
+- `migrate.format` config key — set default migration format (`separate` or `combined`) project-wide
+- `migrate generate --format` flag — per-invocation format override
+- `migrate status` now shows whether each migration has Down SQL available (`down=yes/no`)
+- Exit code 6: `migrate rollback` exits 6 when all requested migrations had no Down SQL
+
+### Fixed
+- `migrate apply` no longer treats `_undo.sql` files as forward migrations when they exist in the migrations directory
 
 ## [0.1.5] — 2026-05-25
 

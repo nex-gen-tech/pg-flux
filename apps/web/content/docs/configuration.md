@@ -27,9 +27,52 @@ target_schemas: [public]
 
 # Schema that holds pg-flux's own tracking table (_pgflux.migrations).
 tracking_schema: _pgflux
+
+# Migration generation defaults (all optional).
+migrate:
+  generate_undo: true   # auto-write Down SQL on every migrate generate
+  format: combined      # "separate" (default) | "combined"
 ```
 
 Created by `pg-flux init`.
+
+### `migrate:` keys
+
+The `migrate:` block configures migration generation defaults. All keys are optional; omit the block entirely to use the built-in defaults.
+
+| Key | Default | Description |
+|---|---|---|
+| `generate_undo` | `false` | When `true`, every `migrate generate` also writes a best-effort reverse migration without needing `--generate-undo` |
+| `format` | `separate` | `separate` — forward SQL in one file, reverse SQL in a separate `_undo.sql` file; `combined` — a single file with `-- +migrate Up` and `-- +migrate Down` sections |
+
+If you only need `generate_undo`, you can omit `format`:
+
+```yaml
+migrate:
+  generate_undo: true
+```
+
+If you only need the combined format (and are happy writing Down SQL by hand):
+
+```yaml
+migrate:
+  format: combined
+```
+
+Both keys can be overridden per invocation:
+
+```bash
+pg-flux migrate generate --generate-undo          # one-off separate undo file
+pg-flux migrate generate --format combined         # one-off combined format
+```
+
+> [!NOTE]
+> `migrate.format: combined` and `migrate.generate_undo: true` are independent.
+> Combined format embeds the Down section in the same file; `generate_undo` writes
+> a separate `_undo.sql`. Setting both will produce a combined file (the
+> `generate_undo` config is superseded when `format: combined` is active).
+
+See the [Rollback guide →](/docs/rollback.html) for end-to-end usage.
 
 ## `.pg-flux-codegen.yml` — codegen config
 
