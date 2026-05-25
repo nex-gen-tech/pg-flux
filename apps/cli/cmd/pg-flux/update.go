@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 const (
@@ -27,81 +28,328 @@ const (
 
 var updateHTTPClient = &http.Client{Timeout: 120 * time.Second}
 
+// ANSI helpers — only used when stdout is a TTY.
+const (
+	ansiReset      = "\x1b[0m"
+	ansiBold       = "\x1b[1m"
+	ansiDim        = "\x1b[2m"
+	ansiCyan       = "\x1b[96m"
+	ansiGreen      = "\x1b[92m"
+	ansiYellow     = "\x1b[93m"
+	ansiClearEOL   = "\x1b[K"
+	ansiClearBelow = "\x1b[J"
+	ansiHideCursor = "\x1b[?25l"
+	ansiShowCursor = "\x1b[?25h"
+)
+
+func cursorUp(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("\x1b[%dA", n)
+}
+
+// ── cobra command ────────────────────────────────────────────────────────────
+
 func cmdUpdate() *cobra.Command {
 	var targetVersion string
 	c := &cobra.Command{
 		Use:   "update",
 		Short: "Update pg-flux to the latest (or a specific) release",
-		Long: "Download and install a pg-flux release from GitHub, replacing the current binary in-place.\n\n" +
-			"Defaults to the latest published release. Use --version to pin to a specific tag.",
-		Example: "  pg-flux update\n  pg-flux update --version v0.1.6",
+		Long: "Interactively pick a pg-flux release to install, or pass --version to skip the prompt.\n\n" +
+			"Downloads the binary from GitHub, verifies SHA-256, and atomically replaces the running binary.",
+		Example: "  pg-flux update                    # interactive version picker\n" +
+			"  pg-flux update --version v0.1.6   # install a specific version",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUpdate(cmd, targetVersion)
 		},
 	}
-	c.Flags().StringVar(&targetVersion, "version", "", "Target version tag (e.g. v0.1.6); defaults to latest release")
+	c.Flags().StringVar(&targetVersion, "version", "", "Install a specific version (e.g. v0.1.6); skips the interactive prompt")
 	return c
 }
 
-type githubRelease struct {
-	TagName string `json:"tag_name"`
+// ── GitHub API ───────────────────────────────────────────────────────────────
+
+type ghRelease struct {
+	TagName     string `json:"tag_name"`
+	Prerelease  bool   `json:"prerelease"`
+	Draft       bool   `json:"draft"`
+	PublishedAt string `json:"published_at"`
 }
 
-func fetchRelease(target string) (string, error) {
-	var apiURL string
-	if target == "" {
-		apiURL = githubReleaseAPI + "/latest"
-	} else {
-		if !strings.HasPrefix(target, "v") {
-			target = "v" + target
-		}
-		apiURL = githubReleaseAPI + "/tags/" + target
-	}
-
-	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "pg-flux/"+Version)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := updateHTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch release info: %w", err)
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusNotFound:
-		if target != "" {
-			return "", fmt.Errorf("release %q not found on GitHub", target)
-		}
-		return "", fmt.Errorf("no published releases found on GitHub")
-	default:
-		return "", fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
-	}
-
-	var rel githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return "", fmt.Errorf("parse release info: %w", err)
-	}
-	return rel.TagName, nil
-}
-
-func downloadAsset(url string) ([]byte, error) {
+func ghRequest(url string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "pg-flux/"+Version)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	return updateHTTPClient.Do(req)
+}
 
-	resp, err := updateHTTPClient.Do(req)
+// fetchReleases returns up to limit stable (non-draft, non-prerelease) releases,
+// newest first.
+func fetchReleases(limit int) ([]ghRelease, error) {
+	var out []ghRelease
+	for page := 1; len(out) < limit; page++ {
+		url := fmt.Sprintf("%s?per_page=100&page=%d", githubReleaseAPI, page)
+		resp, err := ghRequest(url)
+		if err != nil {
+			return nil, fmt.Errorf("fetch releases: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
+		}
+		var page_rels []ghRelease
+		if err := json.NewDecoder(resp.Body).Decode(&page_rels); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("parse releases: %w", err)
+		}
+		resp.Body.Close()
+
+		for _, r := range page_rels {
+			if !r.Draft && !r.Prerelease {
+				out = append(out, r)
+				if len(out) >= limit {
+					break
+				}
+			}
+		}
+		if len(page_rels) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+func fetchReleaseByTag(tag string) (string, error) {
+	if !strings.HasPrefix(tag, "v") {
+		tag = "v" + tag
+	}
+	resp, err := ghRequest(githubReleaseAPI + "/tags/" + tag)
+	if err != nil {
+		return "", fmt.Errorf("fetch release: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return "", fmt.Errorf("release %q not found on GitHub", tag)
+	default:
+		return "", fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
+	}
+	var r ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return "", fmt.Errorf("parse release: %w", err)
+	}
+	return r.TagName, nil
+}
+
+// ── interactive picker ───────────────────────────────────────────────────────
+
+const pickerWindow = 10 // visible rows at a time
+
+// pickerState holds the mutable display state.
+type pickerState struct {
+	releases   []ghRelease
+	cursor     int // absolute index of highlighted item
+	scroll     int // index of top visible item
+	current    string
+	linesDrawn int
+}
+
+func newPickerState(releases []ghRelease, current string) *pickerState {
+	s := &pickerState{releases: releases, current: current}
+	// Pre-select the current version if it's in the list.
+	for i, r := range releases {
+		if r.TagName == current {
+			s.cursor = i
+			break
+		}
+	}
+	// Adjust scroll so cursor is visible.
+	if s.cursor >= pickerWindow {
+		s.scroll = s.cursor - pickerWindow + 1
+	}
+	return s
+}
+
+func (s *pickerState) render(w io.Writer) {
+	var sb strings.Builder
+
+	// Move cursor back to the top of what we last drew.
+	if s.linesDrawn > 0 {
+		sb.WriteString(cursorUp(s.linesDrawn))
+	}
+
+	// ── header ─────────────────────────────────────────────────────────────
+	sb.WriteString("\r" + ansiClearEOL)
+	sb.WriteString(ansiBold + "  Select a version" + ansiReset +
+		ansiDim + "  (↑/↓ move · Enter select · Esc/q cancel)" + ansiReset + "\r\n")
+
+	// ── scroll indicator (top) ─────────────────────────────────────────────
+	if s.scroll > 0 {
+		sb.WriteString("\r" + ansiClearEOL)
+		sb.WriteString(fmt.Sprintf("  %s↑ %d more above%s\r\n", ansiDim, s.scroll, ansiReset))
+	} else {
+		sb.WriteString("\r" + ansiClearEOL + "\r\n") // blank placeholder to keep height fixed
+	}
+
+	// ── items ──────────────────────────────────────────────────────────────
+	end := s.scroll + pickerWindow
+	if end > len(s.releases) {
+		end = len(s.releases)
+	}
+	for i := s.scroll; i < end; i++ {
+		r := s.releases[i]
+		sb.WriteString("\r" + ansiClearEOL)
+
+		selected := i == s.cursor
+		isLatest := i == 0
+		isCurrent := r.TagName == s.current
+
+		if selected {
+			sb.WriteString(ansiBold + ansiCyan + "  ▸ " + r.TagName + ansiReset)
+		} else {
+			sb.WriteString("    " + r.TagName)
+		}
+
+		// Right-side annotations
+		var tags []string
+		if isLatest {
+			tags = append(tags, ansiGreen+"latest"+ansiReset+ansiDim)
+		}
+		if isCurrent {
+			tags = append(tags, ansiYellow+"installed"+ansiReset+ansiDim)
+		}
+		// Trim published_at to date only
+		if len(r.PublishedAt) >= 10 {
+			tags = append(tags, r.PublishedAt[:10])
+		}
+		if len(tags) > 0 {
+			sb.WriteString("  " + ansiDim + strings.Join(tags, " · ") + ansiReset)
+		}
+		sb.WriteString("\r\n")
+	}
+
+	// Pad to full pickerWindow height so line count stays constant.
+	for i := end - s.scroll; i < pickerWindow; i++ {
+		sb.WriteString("\r" + ansiClearEOL + "\r\n")
+	}
+
+	// ── scroll indicator (bottom) ──────────────────────────────────────────
+	remaining := len(s.releases) - end
+	if remaining > 0 {
+		sb.WriteString("\r" + ansiClearEOL)
+		sb.WriteString(fmt.Sprintf("  %s↓ %d more below%s\r\n", ansiDim, remaining, ansiReset))
+	} else {
+		sb.WriteString("\r" + ansiClearEOL + "\r\n")
+	}
+
+	// ── position indicator ─────────────────────────────────────────────────
+	sb.WriteString("\r" + ansiClearEOL)
+	sb.WriteString(fmt.Sprintf("  %s%d / %d%s\r\n", ansiDim, s.cursor+1, len(s.releases), ansiReset))
+
+	fmt.Fprint(w, sb.String())
+
+	// header + top-scroll + pickerWindow + bottom-scroll + position
+	s.linesDrawn = 1 + 1 + pickerWindow + 1 + 1
+}
+
+func (s *pickerState) moveUp() {
+	if s.cursor > 0 {
+		s.cursor--
+		if s.cursor < s.scroll {
+			s.scroll = s.cursor
+		}
+	}
+}
+
+func (s *pickerState) moveDown() {
+	if s.cursor < len(s.releases)-1 {
+		s.cursor++
+		if s.cursor >= s.scroll+pickerWindow {
+			s.scroll = s.cursor - pickerWindow + 1
+		}
+	}
+}
+
+// pickVersion runs the interactive TUI and returns the chosen tag, or "" if
+// cancelled. Falls back to the latest tag when stdin is not a terminal.
+func pickVersion(releases []ghRelease, current string) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return releases[0].TagName, nil // non-interactive: pick latest
+	}
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return releases[0].TagName, nil
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	fmt.Fprint(os.Stdout, ansiHideCursor)
+	defer fmt.Fprint(os.Stdout, ansiShowCursor+"\r\n")
+
+	state := newPickerState(releases, current)
+	state.render(os.Stdout)
+
+	buf := make([]byte, 16)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			return "", err
+		}
+		input := buf[:n]
+
+		switch {
+		// Enter
+		case bytes.Equal(input, []byte{'\r'}), bytes.Equal(input, []byte{'\n'}):
+			return state.releases[state.cursor].TagName, nil
+
+		// Esc or 'q' or Ctrl+C
+		case bytes.Equal(input, []byte{'\x1b'}),
+			bytes.Equal(input, []byte{'q'}),
+			bytes.Equal(input, []byte{'\x03'}):
+			return "", nil
+
+		// Up arrow  (\x1b[A)
+		case len(input) >= 3 && input[0] == '\x1b' && input[1] == '[' && input[2] == 'A',
+			bytes.Equal(input, []byte{'k'}): // vim-style
+			state.moveUp()
+
+		// Down arrow  (\x1b[B)
+		case len(input) >= 3 && input[0] == '\x1b' && input[1] == '[' && input[2] == 'B',
+			bytes.Equal(input, []byte{'j'}): // vim-style
+			state.moveDown()
+
+		// Page Up (half-window jump)
+		case len(input) >= 4 && input[0] == '\x1b' && input[1] == '[' &&
+			input[2] == '5' && input[3] == '~':
+			for i := 0; i < pickerWindow/2; i++ {
+				state.moveUp()
+			}
+
+		// Page Down (half-window jump)
+		case len(input) >= 4 && input[0] == '\x1b' && input[1] == '[' &&
+			input[2] == '6' && input[3] == '~':
+			for i := 0; i < pickerWindow/2; i++ {
+				state.moveDown()
+			}
+		}
+
+		state.render(os.Stdout)
+	}
+}
+
+// ── download / install ───────────────────────────────────────────────────────
+
+func downloadBytes(url string) ([]byte, error) {
+	resp, err := ghRequest(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, url)
 	}
@@ -110,12 +358,7 @@ func downloadAsset(url string) ([]byte, error) {
 
 func parseSHA256Sums(data []byte, assetName string) (string, error) {
 	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		// Format: "<hash>  <filename>" or "<hash> <filename>"
-		parts := strings.Fields(line)
+		parts := strings.Fields(strings.TrimSpace(line))
 		if len(parts) >= 2 && parts[1] == assetName {
 			return parts[0], nil
 		}
@@ -129,7 +372,6 @@ func extractFromTarGz(data []byte, binaryName string) ([]byte, error) {
 		return nil, fmt.Errorf("gzip: %w", err)
 	}
 	defer gr.Close()
-
 	tr := tar.NewReader(gr)
 	for {
 		hdr, err := tr.Next()
@@ -139,7 +381,6 @@ func extractFromTarGz(data []byte, binaryName string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tar: %w", err)
 		}
-		// Match by base name only — handles ./pg-flux, pg-flux, etc.
 		if filepath.Base(hdr.Name) == binaryName {
 			return io.ReadAll(tr)
 		}
@@ -167,70 +408,48 @@ func extractFromZip(data []byte, binaryName string) ([]byte, error) {
 
 func installBinary(binData []byte, execPath string, isWindows bool) error {
 	dir := filepath.Dir(execPath)
-	tmpFile, err := os.CreateTemp(dir, ".pg-flux-update-*")
+	tmp, err := os.CreateTemp(dir, ".pg-flux-update-*")
 	if err != nil {
-		return fmt.Errorf("create temp file (check write permissions for %s): %w", dir, err)
+		return fmt.Errorf("create temp file (check write permission for %s): %w", dir, err)
 	}
-	tmpPath := tmpFile.Name()
+	tmpPath := tmp.Name()
 
-	if _, err := tmpFile.Write(binData); err != nil {
-		tmpFile.Close()
+	if _, err := tmp.Write(binData); err != nil {
+		tmp.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("write new binary: %w", err)
 	}
-	if err := tmpFile.Chmod(0o755); err != nil {
-		tmpFile.Close()
+	if err := tmp.Chmod(0o755); err != nil {
+		tmp.Close()
 		os.Remove(tmpPath)
-		return fmt.Errorf("chmod new binary: %w", err)
+		return fmt.Errorf("chmod binary: %w", err)
 	}
-	tmpFile.Close()
+	tmp.Close()
 
 	if isWindows {
-		// Windows: can't delete a running exe, but can rename it.
-		// Rename current → .old, then rename tmp → current.
 		oldPath := execPath + ".old"
-		os.Remove(oldPath) // clean up any leftover from a previous update
+		os.Remove(oldPath)
 		if err := os.Rename(execPath, oldPath); err != nil {
 			os.Remove(tmpPath)
 			return fmt.Errorf("back up current binary: %w", err)
 		}
 		if err := os.Rename(tmpPath, execPath); err != nil {
-			os.Rename(oldPath, execPath) // restore on failure
+			os.Rename(oldPath, execPath)
 			os.Remove(tmpPath)
 			return fmt.Errorf("install new binary: %w", err)
 		}
-		os.Remove(oldPath) // best-effort cleanup
+		os.Remove(oldPath)
 	} else {
 		if err := os.Rename(tmpPath, execPath); err != nil {
 			os.Remove(tmpPath)
-			return fmt.Errorf("install new binary (try with sudo if permission denied): %w", err)
+			return fmt.Errorf("install binary (try sudo if permission denied): %w", err)
 		}
 	}
 	return nil
 }
 
-func runUpdate(cmd *cobra.Command, targetVersion string) error {
-	out := cmd.OutOrStdout()
-
-	// 1. Resolve target version from GitHub
-	fmt.Fprintf(out, "Checking for updates...\n")
-	tag, err := fetchRelease(targetVersion)
-	if err != nil {
-		return err
-	}
-
-	// 2. Already on this version?
-	if tag == Version {
-		fmt.Fprintf(out, "pg-flux %s is already up to date.\n", Version)
-		return nil
-	}
-	if Version == "dev" {
-		fmt.Fprintf(out, "Installing pg-flux %s (dev build → release)\n", tag)
-	} else {
-		fmt.Fprintf(out, "Updating pg-flux %s → %s\n", Version, tag)
-	}
-
-	// 3. Determine asset name for the running platform
+// installVersion downloads and installs the given tag.
+func installVersion(out io.Writer, tag string) error {
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
 	isWindows := goos == "windows"
@@ -246,33 +465,29 @@ func runUpdate(cmd *cobra.Command, targetVersion string) error {
 
 	baseURL := githubDownloadBase + "/" + tag
 
-	// 4. Download SHA256SUMS and locate expected checksum
 	fmt.Fprintf(out, "Fetching checksums...\n")
-	sumsData, err := downloadAsset(baseURL + "/SHA256SUMS")
+	sumsData, err := downloadBytes(baseURL + "/SHA256SUMS")
 	if err != nil {
 		return fmt.Errorf("download SHA256SUMS: %w", err)
 	}
-	expectedHash, err := parseSHA256Sums(sumsData, assetName)
+	expected, err := parseSHA256Sums(sumsData, assetName)
 	if err != nil {
 		return err
 	}
 
-	// 5. Download binary archive
 	fmt.Fprintf(out, "Downloading %s...\n", assetName)
-	archiveData, err := downloadAsset(baseURL + "/" + assetName)
+	archiveData, err := downloadBytes(baseURL + "/" + assetName)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", assetName, err)
 	}
 	fmt.Fprintf(out, "Downloaded %.1f MB\n", float64(len(archiveData))/1_000_000)
 
-	// 6. Verify checksum
 	sum := sha256.Sum256(archiveData)
-	if hex.EncodeToString(sum[:]) != expectedHash {
-		return fmt.Errorf("checksum mismatch — download may be corrupted; aborting")
+	if hex.EncodeToString(sum[:]) != expected {
+		return fmt.Errorf("checksum mismatch — download may be corrupted")
 	}
 	fmt.Fprintf(out, "Checksum verified\n")
 
-	// 7. Extract binary from archive
 	var binData []byte
 	if isWindows {
 		binData, err = extractFromZip(archiveData, binaryName)
@@ -283,7 +498,6 @@ func runUpdate(cmd *cobra.Command, targetVersion string) error {
 		return fmt.Errorf("extract binary: %w", err)
 	}
 
-	// 8. Resolve actual path of the running binary (follow symlinks)
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("locate current binary: %w", err)
@@ -293,7 +507,6 @@ func runUpdate(cmd *cobra.Command, targetVersion string) error {
 		return fmt.Errorf("resolve binary path: %w", err)
 	}
 
-	// 9. Atomically replace the binary
 	fmt.Fprintf(out, "Installing to %s...\n", execPath)
 	if err := installBinary(binData, execPath, isWindows); err != nil {
 		return err
@@ -301,4 +514,66 @@ func runUpdate(cmd *cobra.Command, targetVersion string) error {
 
 	fmt.Fprintf(out, "pg-flux updated to %s\n", tag)
 	return nil
+}
+
+// ── entry point ──────────────────────────────────────────────────────────────
+
+func runUpdate(cmd *cobra.Command, targetVersion string) error {
+	out := cmd.OutOrStdout()
+
+	// Non-interactive path: --version was supplied.
+	if targetVersion != "" {
+		if !strings.HasPrefix(targetVersion, "v") {
+			targetVersion = "v" + targetVersion
+		}
+		// Validate the tag exists before downloading.
+		tag, err := fetchReleaseByTag(targetVersion)
+		if err != nil {
+			return err
+		}
+		if tag == Version {
+			fmt.Fprintf(out, "pg-flux %s is already installed.\n", Version)
+			return nil
+		}
+		fmt.Fprintf(out, "Installing pg-flux %s...\n", tag)
+		return installVersion(out, tag)
+	}
+
+	// Interactive path: show picker.
+	fmt.Fprintf(out, "Fetching available releases...\n")
+	releases, err := fetchReleases(50)
+	if err != nil {
+		return err
+	}
+	if len(releases) == 0 {
+		return fmt.Errorf("no releases found on GitHub")
+	}
+
+	// Erase the "Fetching..." line before drawing the picker.
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprint(os.Stdout, "\r\x1b[K") // \r + clear to EOL
+		fmt.Fprint(os.Stdout, cursorUp(1))
+	}
+
+	chosen, err := pickVersion(releases, Version)
+	if err != nil {
+		return err
+	}
+	if chosen == "" {
+		fmt.Fprintf(out, "Update cancelled.\n")
+		return nil
+	}
+
+	if chosen == Version {
+		fmt.Fprintf(out, "pg-flux %s is already installed.\n", Version)
+		return nil
+	}
+
+	if Version == "dev" {
+		fmt.Fprintf(out, "Installing pg-flux %s (dev build → release)\n", chosen)
+	} else {
+		fmt.Fprintf(out, "Updating pg-flux %s → %s\n", Version, chosen)
+	}
+
+	return installVersion(out, chosen)
 }
