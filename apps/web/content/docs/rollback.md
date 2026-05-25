@@ -117,8 +117,9 @@ Roll back the most recently applied migration:
 
 ```bash
 $ pg-flux migrate rollback
-rolling back 20260520_103245_add_users_phone.sql ...
-      ok
+rollback 20260520_103245_add_users_phone.sql ...
+         ok
+
 Rolled back 1 migration(s).
 ```
 
@@ -126,12 +127,13 @@ Roll back the last 3 applied migrations:
 
 ```bash
 $ pg-flux migrate rollback 3
-rolling back 20260520_103245_add_users_phone.sql ...
-      ok
-rolling back 20260519_091012_add_posts_table.sql ...
-      ok
-rolling back 20260518_140330_initial_schema.sql ...
-      ok
+rollback 20260520_103245_add_users_phone.sql ...
+         ok
+rollback 20260519_091012_add_posts_table.sql ...
+         ok
+rollback 20260518_140330_initial_schema.sql ...
+         ok
+
 Rolled back 3 migration(s).
 ```
 
@@ -145,48 +147,53 @@ Use `--dry-run` to preview what would be rolled back without touching the databa
 
 ```bash
 $ pg-flux migrate rollback --dry-run
--- dry-run: would roll back 1 migration(s), no changes made
+would rollback 20260520_103245_add_users_phone.sql
 
-20260520_103245_add_users_phone.sql:
-  DROP INDEX idx_users_phone;
-  ALTER TABLE users DROP COLUMN phone;
+Dry run: would roll back 1 migration(s).
 ```
+
+No database changes are made. The tracking table is not modified.
 
 ---
 
 ## Checking Down SQL availability
 
-`migrate status` includes a `down` column showing whether each migration has Down SQL available:
+`migrate status` includes a `DOWN` column showing whether each migration has Down SQL available:
 
 ```bash
 $ pg-flux migrate status
-  migration                                    applied_at            down
-  20260518_140330_initial_schema.sql           2026-05-18 14:03:30   no
-  20260519_091012_add_posts_table.sql          2026-05-19 09:10:12   yes
-  20260520_103245_add_users_phone.sql          2026-05-20 10:32:45   yes
+STATUS   FILENAME                                APPLIED AT                     DOWN
+applied  20260518_140330_initial_schema.sql      2026-05-18 14:03:30.000000+00  no
+applied  20260519_091012_add_posts_table.sql     2026-05-19 09:10:12.000000+00  yes
+applied  20260520_103245_add_users_phone.sql     2026-05-20 10:32:45.000000+00  yes
 ```
 
-A value of `no` in the `down` column means rollback will skip that migration.
+`DOWN no` means rollback will skip that migration.
 
 ---
 
 ## When there is no Down SQL
 
-If a migration has no Down SQL, `migrate rollback` skips it and prints a tip:
+If a migration has no Down SQL, `migrate rollback` skips it with a note and a tip:
 
 ```text
-skipping 20260518_140330_initial_schema.sql — no Down SQL (add a -- +migrate Down section to enable rollback)
+skip  20260518_140330_initial_schema.sql (no down SQL)
 ```
 
 If **all** requested migrations are skipped due to missing Down SQL, pg-flux exits with code **6**:
 
 ```bash
 $ pg-flux migrate rollback
-skipping 20260518_140330_initial_schema.sql — no Down SQL (add a -- +migrate Down section to enable rollback)
-All 1 migration(s) skipped — no Down SQL available.
+skip  20260518_140330_initial_schema.sql (no down SQL)
+
+Skipped 1 migration(s) — no Down SQL found:
+  20260518_140330_initial_schema.sql
+Tip: re-run migrate generate with --format=combined or --generate-undo to get Down SQL.
 $ echo $?
 6
 ```
+
+When at least one migration is successfully rolled back alongside some skips, the exit code is `0` — only a fully-skipped run exits `6`.
 
 See [exit code 6](/docs/cli-overview.html) in the CLI reference.
 

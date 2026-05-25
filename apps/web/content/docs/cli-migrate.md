@@ -92,14 +92,14 @@ Lists every file in `migrations/` with its applied/pending state, apply timestam
 
 ```bash
 $ pg-flux migrate status
-  migration                                    applied_at            down
-  20260518_140330_initial_schema.sql           2026-05-18 14:03:30   no
-  20260519_091012_add_posts_table.sql          2026-05-19 09:10:12   yes
-  20260520_103245_add_users_phone.sql          2026-05-20 10:32:45   yes
-  20260521_083011_add_audit_table.sql          (pending)             yes
+STATUS   FILENAME                                APPLIED AT                     DOWN
+applied  20260518_140330_initial_schema.sql      2026-05-18 14:03:30.000000+00  no
+applied  20260519_091012_add_posts_table.sql     2026-05-19 09:10:12.000000+00  yes
+applied  20260520_103245_add_users_phone.sql     2026-05-20 10:32:45.000000+00  yes
+pending  20260521_083011_add_audit_table.sql                                    yes
 ```
 
-The `down` column shows `yes` when the migration file contains a `-- +migrate Down` section (combined format) or a matching `_undo.sql` file (separate format). Pending migrations with Down SQL will be rolled back if applied and then rolled back.
+The `DOWN` column shows `yes` when the migration file contains a `-- +migrate Down` section (combined format) or a matching `_undo.sql` file exists (separate format).
 
 ---
 
@@ -122,14 +122,12 @@ Migrations are rolled back in reverse-apply order (most recent first). Migration
 Each rollback runs inside a transaction. On failure the transaction is rolled back and the tracking row is left intact — the migration stays marked as applied.
 
 > [!TIP]
-> Use `--dry-run` to inspect the Down SQL before committing to a rollback:
+> Use `--dry-run` to preview what would be rolled back without touching the database:
 > ```bash
 > $ pg-flux migrate rollback --dry-run
-> -- dry-run: would roll back 1 migration(s), no changes made
+> would rollback 20260520_103245_add_users_phone.sql
 >
-> 20260520_103245_add_users_phone.sql:
->   DROP INDEX idx_users_phone;
->   ALTER TABLE users DROP COLUMN phone;
+> Dry run: would roll back 1 migration(s).
 > ```
 
 ### Examples
@@ -137,18 +135,18 @@ Each rollback runs inside a transaction. On failure the transaction is rolled ba
 ```bash
 # Roll back the most recently applied migration
 $ pg-flux migrate rollback
-rolling back 20260520_103245_add_users_phone.sql ...
-      ok
+rollback 20260520_103245_add_users_phone.sql ...
+         ok
 Rolled back 1 migration(s).
 
 # Roll back the last 3 migrations
 $ pg-flux migrate rollback 3
-rolling back 20260520_103245_add_users_phone.sql ...
-      ok
-rolling back 20260519_091012_add_posts_table.sql ...
-      ok
-rolling back 20260518_140330_initial_schema.sql ...
-      ok
+rollback 20260520_103245_add_users_phone.sql ...
+         ok
+rollback 20260519_091012_add_posts_table.sql ...
+         ok
+rollback 20260518_140330_initial_schema.sql ...
+         ok
 Rolled back 3 migration(s).
 ```
 
