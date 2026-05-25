@@ -27,6 +27,7 @@ pg-flux
 ├── dump                     extract live schema to source files
 ├── pull                     capture undeclared live objects to quarantine
 ├── gen [init]               generate Go / TypeScript / Python / Rust types
+├── update                   self-update to the latest (or --version) release
 └── version
 ```
 

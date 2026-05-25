@@ -28,11 +28,11 @@ What it does:
 
 ```bash
 $ pg-flux version
-pg-flux v0.1.5
+pg-flux v0.1.6
 ```
 
 > [!TIP]
-> Pin to a specific version: `curl -sSfL https://... | PGFLUX_VERSION=v0.1.5 sh`
+> Pin to a specific version: `curl -sSfL https://... | PGFLUX_VERSION=v0.1.6 sh`
 > Override the install dir: `... | PGFLUX_BIN_DIR=$HOME/.local/bin sh`
 
 ---
@@ -146,7 +146,7 @@ $cur = [Environment]::GetEnvironmentVariable("PATH", "User")
 [Environment]::SetEnvironmentVariable("PATH", "$cur;$GoBin", "User")
 ```
 
-Pin to a specific version with `@v0.1.5` instead of `@latest`.
+Pin to a specific version with `@v0.1.6` instead of `@latest`.
 
 ---
 
@@ -212,6 +212,43 @@ pg-flux --help
 ```
 
 `--help` prints the full command tree. If you ever forget a flag, this is faster than the docs.
+
+---
+
+## Updating pg-flux
+
+Once installed, you can update pg-flux from within itself:
+
+```bash
+# Update to the latest release
+pg-flux update
+
+# Pin to a specific version
+pg-flux update --version v0.1.6
+```
+
+What `pg-flux update` does:
+
+1. Fetches the latest (or requested) release tag from GitHub.
+2. Downloads the matching binary for your OS and architecture.
+3. Verifies the SHA-256 checksum against the release's `SHA256SUMS` file.
+4. Atomically replaces the running binary in-place — no separate download step needed.
+
+```bash
+$ pg-flux update
+Checking for updates...
+Updating pg-flux v0.1.6 → v0.1.6
+Fetching checksums...
+Downloading pg-flux-darwin-arm64.tar.gz...
+Downloaded 6.2 MB
+Checksum verified
+Installing to /usr/local/bin/pg-flux...
+pg-flux updated to v0.1.6
+```
+
+> [!NOTE]
+> If pg-flux is installed in a system directory (e.g. `/usr/local/bin`), you may need `sudo pg-flux update`.
+> For user-local installs (`~/.local/bin`) no elevated permissions are needed.
 
 ---
 

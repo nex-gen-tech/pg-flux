@@ -328,7 +328,7 @@ Exit codes:
 		}
 		return nil
 	}
-	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdDump(), cmdVerify(), cmdPull(), cmdGen(), cmdVersion())
+	r.AddCommand(cmdInit(), cmdPlan(), cmdApply(), cmdDrift(), cmdInspect(), cmdMigrate(), cmdDump(), cmdVerify(), cmdPull(), cmdGen(), cmdVersion(), cmdUpdate())
 	silenceUsageRecursively(r)
 	return r
 }
