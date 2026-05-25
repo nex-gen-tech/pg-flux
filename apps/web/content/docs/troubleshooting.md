@@ -112,16 +112,13 @@ Error: refusing to apply 20260520_add_role.sql: live database state has drifted
 since this migration was generated (expected baseline=abc123…, live=def456…)
 ```
 
-Someone (or something) modified the DB between when you ran `migrate generate` and when you're trying to `migrate apply`. Your options:
+The cause is usually one of two things: (1) the DB was modified manually outside pg-flux, or (2) a colleague's migration was applied before yours in a parallel-branch scenario. `migrate rebase` handles both cases.
 
 **Option A** — rebase the migration:
 
 ```bash
-# this captures the current live state into source first
-pg-flux pull --dry-run=false
-
-# then regenerate against the new baseline
-pg-flux migrate generate --label rebase
+# Regenerate your pending migration against the current live state
+pg-flux migrate rebase
 ```
 
 **Option B** — force apply if you've manually verified compatibility:
@@ -131,6 +128,20 @@ pg-flux migrate apply --force-after-drift
 ```
 
 See [Drift recovery](/docs/drift.html) for the full playbook.
+
+### `warning: out-of-order migration`
+
+```text
+warning: out-of-order migration 20260601_100000_dev_a.sql (last applied: 20260601_100500_dev_b.sql)
+  This migration was generated before 20260601_100500_dev_b.sql was applied, which typically
+  means two branches were developed in parallel. You likely need to
+  run `pg-flux migrate rebase` to regenerate this migration on top of
+  the current database state.
+```
+
+This warning appears when a pending migration file has an earlier timestamp than the last applied migration. It indicates that two branches were developed in parallel and the other branch was deployed first.
+
+The warning is non-fatal — apply continues — but it's almost always followed by a drift error. Run `pg-flux migrate rebase` to fix the ordering. See [Working in a team →](/docs/teamwork.html) for the full playbook.
 
 ### `checksum mismatch for already-applied migration`
 
@@ -155,7 +166,7 @@ You edited a migration file *after* it was applied. The tracking table has the o
 Error: could not acquire migration advisory lock (another apply in progress)
 ```
 
-Two apply processes are racing against the same database. pg-flux retries for **30 seconds** (once per second) before giving up. If it still fails, either:
+Two `migrate apply` processes are racing. This is expected when two CI pipelines fire simultaneously (e.g., two PRs merge in quick succession). pg-flux serializes them via a session-level advisory lock. pg-flux retries for **30 seconds** (once per second) before giving up. If it still fails, either:
 
 1. Wait for the other process to finish naturally, then retry.
 2. If the other process is stuck or dead, release the lock manually:

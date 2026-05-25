@@ -58,6 +58,11 @@ Re-run `pg-flux migrate generate` to rebase the migration, or pass --force-after
 to apply anyway.
 ```
 
+> [!TIP]
+> In a multi-developer team, this error often means a colleague's migration was
+> applied before yours. Run `pg-flux migrate rebase` to regenerate your pending
+> migration against the current database state. See [Working in a team →](/docs/teamwork.html).
+
 ## Status
 
 ```bash
@@ -75,6 +80,7 @@ These edge-case commands cover real production scenarios:
 | `pg-flux migrate baseline FILE` | Adopting pg-flux against an existing DB — marks files as "already applied" without running them. |
 | `pg-flux migrate repair`        | A migration's content was edited after applying. Recomputes the recorded checksum (safe on already-applied content). |
 | `pg-flux migrate generate --generate-undo` | Also writes a best-effort reverse-migration alongside the forward one. |
+| `pg-flux migrate rebase` | Two developers generated migrations against the same base state. After the other's migrates were applied, regenerate yours on top. |
 
 ## Drift detection
 
@@ -120,3 +126,4 @@ For ADD CHECK / ADD FOREIGN KEY on large tables, pg-flux auto-rewrites to the sa
 - [Hazards →](/docs/hazards.html)
 - [Drift recovery →](/docs/drift.html)
 - [Configuration →](/docs/configuration.html)
+- [Working in a team →](/docs/teamwork.html)

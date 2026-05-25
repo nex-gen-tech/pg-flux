@@ -17,6 +17,7 @@ pg-flux
 │   ├── apply               apply pending migration files
 │   ├── status              list applied / pending / down-sql availability
 │   ├── rollback [N]        roll back the last N applied migrations
+│   ├── rebase              Regenerate pending migrations against the current live database state
 │   ├── repair              recompute checksums after editing applied files
 │   └── baseline FILE       mark a file as already-applied
 ├── plan                     compute diff without writing a file

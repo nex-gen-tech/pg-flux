@@ -26,6 +26,48 @@ Pair these as your standard pipeline:
 
 Run all four on every PR.
 
+## Multi-developer PR workflow
+
+When two developers open PRs that both modify the schema, the PR that merges second needs a rebase step before it can deploy. pg-flux's CI detects this automatically and gives actionable guidance.
+
+**What the tooling does for you:**
+- Advisory lock on `migrate apply` — two pipelines can't apply simultaneously; the second waits up to 30 seconds, then either succeeds (first is done) or errors with a clear lock-release command
+- Out-of-order detection — if a pending migration has an earlier timestamp than the last applied migration, `migrate apply` emits a warning and a step-by-step fix
+- Drift error with parallel-branch guidance — the error message distinguishes "parallel development" from "manual schema change" and gives a 4-step fix
+
+**The developer workflow for the second PR:**
+
+```bash
+# After your colleague's PR merged to main and was applied to staging:
+git pull origin main            # pull their migration into your branch
+pg-flux migrate apply           # apply it to your local DB
+pg-flux migrate rebase          # regenerate your migration on top
+git add migrations/
+git commit -m "rebase: regenerate migration after teammate's changes"
+git push
+```
+
+**Adding a rebase check to your PR CI:**
+
+You can fail CI explicitly when a migration is detected as needing a rebase, before it even reaches the apply step:
+
+```yaml
+- name: check for out-of-order migrations
+  env:
+    DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+  run: |
+    # pg-flux migrate apply --dry-run prints out-of-order warnings
+    # exit non-zero if any out-of-order migration is detected
+    output=$(pg-flux migrate apply --dry-run 2>&1)
+    echo "$output"
+    if echo "$output" | grep -q "out-of-order migration"; then
+      echo "❌ Out-of-order migrations detected. Run: pg-flux migrate rebase"
+      exit 1
+    fi
+```
+
+This surfaces the problem earlier (on the PR itself) rather than at the deploy step.
+
 ## GitHub Actions
 
 Drop this in `.github/workflows/pg-flux.yml`:
