@@ -9,7 +9,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/nex-gen-tech/pg-flux?style=flat-square" alt="MIT license"></a>
   <a href="https://github.com/nex-gen-tech/pg-flux/releases"><img src="https://img.shields.io/github/v/release/nex-gen-tech/pg-flux?style=flat-square&label=release" alt="release"></a>
   <img src="https://img.shields.io/badge/PostgreSQL-14%20%E2%80%93%2018-336791?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 14-18">
-  <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.25+">
+  <img src="https://img.shields.io/badge/Go-1.22%2B-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.22+">
 </p>
 
 Declarative PostgreSQL migrations with safe apply, drift detection, schema dump, and end-to-end Go + TypeScript + Python + Rust codegen. Write SQL once. Keep your schema, your migrations, and your app types in lock-step. Forever.
@@ -195,7 +195,7 @@ pg-flux generates typed application code **and** completes in half the time Atla
 
 ## Status
 
-**v0.1.3 — production-ready against PostgreSQL 14–18.** The 130/130 PG-version × mutation matrix runs in CI nightly and on every merge to `main`. Five real-world example apps (FastAPI + Python, Express + TypeScript, Go events, Go e-commerce, Rust HRM) pass `drift` and `verify` cleanly.
+**v0.1.6 — production-ready against PostgreSQL 14–18.** The 130/130 PG-version × mutation matrix runs in CI nightly and on every merge to `main`. Six real-world example apps (FastAPI + Python, Express + TypeScript, Go events, Go e-commerce, Rust HRM, Go blog) pass `drift` and `verify` cleanly.
 
 See [CHANGELOG.md](./CHANGELOG.md) for what changed in each release and [ROADMAP.md](./ROADMAP.md) for what's coming.
 
@@ -211,13 +211,15 @@ Other paths:
 
 | Path | Command |
 |---|---|
-| **curl \| sh** | `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh \| sh` |
-| Manual binary | Download from [GitHub Releases](https://github.com/nex-gen-tech/pg-flux/releases), `tar -xzf`, move to `/usr/local/bin` |
-| Pin a version | `curl -sSfL .../install.sh \| PGFLUX_VERSION=v0.1.3 sh` |
-| Go install | `go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest` |
+| **curl \| sh** (macOS/Linux) | `curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh \| sh` |
+| **PowerShell** (Windows) | See [Installation docs →](https://nex-gen-tech.github.io/pg-flux/docs/installation.html#windows) |
+| Manual binary | Download from [GitHub Releases](https://github.com/nex-gen-tech/pg-flux/releases), extract, move to `PATH` |
+| Self-update | `pg-flux update` (interactive picker) or `pg-flux update --version v0.1.6` |
+| Pin a version | `curl -sSfL .../install.sh \| PGFLUX_VERSION=v0.1.6 sh` |
+| Go install | `go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest` (requires CGO / C toolchain) |
 | Build from source | `git clone … && cd pg-flux/apps/cli && go build -o pg-flux ./cmd/pg-flux` |
 
-Binaries are statically linked. Supported platforms: `darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`.
+Binaries are available for: `darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`, `windows-amd64`, `windows-arm64`.
 
 > **No-sudo install.** Set `PGFLUX_BIN_DIR=$HOME/.local/bin` before piping if `/usr/local/bin` isn't writable.
 
@@ -247,6 +249,7 @@ Four real-world apps in [`examples/`](./examples/):
 | [`go-events`](./examples/go-events/) | Go + chi + pgx/v5 | IDENTITY columns, materialized view, deferrable FK, `text[]` GIN |
 | [`go-shop`](./examples/go-shop/) | Go + chi + pgx/v5 | 2 schemas, partitioned table, EXCLUDE, BRIN, INCLUDE, domains, composite type, SECURITY DEFINER, stored procedure, grants |
 | [`rust-hrm`](./examples/rust-hrm/) | Rust + Actix-web + sqlx | Everything in go-shop + `daterange`, `tstzrange`, `pg_trgm` trigram GIN, window function in matview, multiple EXCLUDE constraints, self-referential table, Rust codegen |
+| [`go-blog`](./examples/go-blog/) | Go + net/http + pgx/v5 | Combined up/down migrations, `migrate rollback`, codegen, step-by-step `JOURNEY.md` |
 
 Every example passes `pg-flux drift` and `pg-flux verify` cleanly and runs end-to-end in CI.
 
