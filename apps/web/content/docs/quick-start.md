@@ -9,23 +9,48 @@ Get from zero to a working pg-flux setup in five minutes. By the end of this gui
 
 ## Install
 
+**macOS / Linux** — one command, no Go required:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/nex-gen-tech/pg-flux/main/install.sh | sh
+```
+
+**Windows** — PowerShell one-liner (no admin required):
+
+```powershell
+$InstallDir = "$env:USERPROFILE\.local\bin"
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+$Release = (Invoke-RestMethod "https://api.github.com/repos/nex-gen-tech/pg-flux/releases/latest").tag_name
+$Arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
+$Zip = "pg-flux-windows-$Arch.zip"
+Invoke-WebRequest -Uri "https://github.com/nex-gen-tech/pg-flux/releases/latest/download/$Zip" -OutFile "$env:TEMP\$Zip"
+Expand-Archive -Path "$env:TEMP\$Zip" -DestinationPath "$env:TEMP\pg-flux-extracted" -Force
+Copy-Item "$env:TEMP\pg-flux-extracted\pg-flux.exe" -Destination "$InstallDir\pg-flux.exe" -Force
+$UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ($UserPath -notlike "*$InstallDir*") { [Environment]::SetEnvironmentVariable("PATH", "$UserPath;$InstallDir", "User") }
+pg-flux version
+```
+
+**Alternative** — if you have Go 1.22+ installed:
+
 ```bash
 go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 ```
 
-Or grab a binary from the [releases page](https://github.com/nex-gen-tech/pg-flux/releases).
+> [!NOTE]
+> `go install` requires CGO (a C compiler). The curl/PowerShell installs use pre-built binaries and need nothing extra. See [Installation →](/docs/installation.html) for all options including manual download.
 
-Verify the install:
+Verify:
 
 ```bash
 pg-flux version
-# pg-flux v0.1.3
+# pg-flux v0.1.6
 ```
 
 You'll also need:
 
 - **PostgreSQL 14 or newer** running somewhere you can reach.
-- For codegen: **Go 1.25+** (if generating Go types) and/or **TypeScript** (any modern version) in the target project.
+- For codegen: **Go 1.22+** (if generating Go types) and/or **TypeScript** (any modern version) in the target project.
 
 > [!TIP]
 > The fastest local Postgres is a Docker container. One-liner:

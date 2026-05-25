@@ -194,7 +194,7 @@ go build -o pg-flux.exe .\cmd\pg-flux
 A container image is on the roadmap. For now, install via Go in your container:
 
 ```dockerfile
-FROM golang:1.25 AS pgflux
+FROM golang:1.23 AS pgflux
 RUN go install github.com/nex-gen-tech/pg-flux/cmd/pg-flux@latest
 
 FROM debian:stable-slim
@@ -237,7 +237,7 @@ What `pg-flux update` does:
 ```bash
 $ pg-flux update
 Checking for updates...
-Updating pg-flux v0.1.6 → v0.1.6
+Updating pg-flux v0.1.5 → v0.1.6
 Fetching checksums...
 Downloading pg-flux-darwin-arm64.tar.gz...
 Downloaded 6.2 MB

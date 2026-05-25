@@ -29,6 +29,7 @@ const GROUPS: LinkGroup[] = [
       { label: "Configuration", href: BASE + "/docs/configuration.html" },
       { label: "Drift recovery", href: BASE + "/docs/drift.html" },
       { label: "Dump · verify · pull", href: BASE + "/docs/dump.html" },
+      { label: "Inspect · update", href: BASE + "/docs/cli-other.html" },
     ],
   },
   {
@@ -115,7 +116,7 @@ export function Footer() {
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-[hsl(140_60%_50%)]" />
               PostgreSQL 14 – 18
             </span>
-            <span>v0.1.5</span>
+            <span>v0.1.6</span>
           </div>
         </div>
       </div>

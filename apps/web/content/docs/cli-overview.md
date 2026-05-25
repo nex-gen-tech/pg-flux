@@ -22,8 +22,8 @@ pg-flux
 ├── plan                     compute diff without writing a file
 ├── apply                    apply the in-memory plan
 ├── drift                    live ≠ source? exit 2
-├── verify [--strict]        live ⊃ source? exit 1
-├── inspect                  dump every catalog object as CREATE-style SQL
+├── verify [--strict]        live ⊃ source? exit 4
+├── inspect                  print live schema as CREATE SQL; --type/--object/--summary filters
 ├── dump                     extract live schema to source files
 ├── pull                     capture undeclared live objects to quarantine
 ├── gen [init]               generate Go / TypeScript / Python / Rust types
