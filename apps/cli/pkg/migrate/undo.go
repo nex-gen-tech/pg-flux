@@ -215,7 +215,9 @@ func undoStatement(s plan.Statement) (ddl string, manual string) {
 	// Functions / Procedures
 	case plan.ChangeCreateFunction:
 		if m := reSchemaTable.FindStringSubmatch(obj); m != nil {
-			return fmt.Sprintf(`DROP FUNCTION IF EXISTS "%s"."%s" CASCADE`, m[1], m[2]), ""
+			// obj is "schema.name(arg_types)" — the args must sit outside the quoted name.
+			funcName, args := splitFuncArgs(m[2])
+			return fmt.Sprintf(`DROP FUNCTION IF EXISTS "%s"."%s"%s CASCADE`, m[1], funcName, args), ""
 		}
 		return fmt.Sprintf("DROP FUNCTION IF EXISTS %s CASCADE", obj), ""
 
@@ -289,6 +291,15 @@ func undoStatement(s plan.Statement) (ddl string, manual string) {
 	}
 
 	return "", fmt.Sprintf("MANUAL: no known undo for op=%s obj=%s  DDL: %s", s.OpType, s.Object, s.DDL)
+}
+
+// splitFuncArgs splits "name(arg_types)" into ("name", "(arg_types)").
+// If there are no parentheses, returns (name, "").
+func splitFuncArgs(nameWithArgs string) (name, args string) {
+	if i := strings.Index(nameWithArgs, "("); i >= 0 {
+		return nameWithArgs[:i], nameWithArgs[i:]
+	}
+	return nameWithArgs, ""
 }
 
 var reRenameTable = regexp.MustCompile(`(?i)ALTER\s+TABLE\s+(\S+)\s+RENAME\s+TO\s+"?([^";]+)"?`)

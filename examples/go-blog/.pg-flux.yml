@@ -1,0 +1,8 @@
+version: 1
+db: postgres://pgflux:pgflux@localhost:5440/pgflux_blog
+schema_dir: ./schema
+migrations_dir: ./migrations
+
+migrate:
+  generate_undo: true
+  format: combined
