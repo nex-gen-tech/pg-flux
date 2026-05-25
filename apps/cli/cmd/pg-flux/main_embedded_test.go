@@ -155,14 +155,48 @@ func TestCmdInspect_embedded(t *testing.T) {
 		r.SetArgs([]string{"apply", "--db", dsn, "--schema", dir})
 		require.NoError(t, r.Execute())
 	}
-	out := t.TempDir() + "/ins"
-	_ = os.MkdirAll(out, 0o755)
-	var buf bytes.Buffer
-	r := newRoot()
-	r.SetOut(&buf)
-	r.SetArgs([]string{"inspect", "--db", dsn, "--out", out, "--schemas", "public"})
-	require.NoError(t, r.Execute())
-	require.Contains(t, buf.String(), "Wrote table")
+
+	t.Run("stdout SQL", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := newRoot()
+		r.SetOut(&buf)
+		r.SetArgs([]string{"inspect", "--db", dsn, "--schemas", "public"})
+		require.NoError(t, r.Execute())
+		require.Contains(t, buf.String(), "CREATE TABLE")
+		require.Contains(t, buf.String(), "ins")
+	})
+
+	t.Run("summary", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := newRoot()
+		r.SetOut(&buf)
+		r.SetArgs([]string{"inspect", "--db", dsn, "--schemas", "public", "--summary"})
+		require.NoError(t, r.Execute())
+		require.Contains(t, buf.String(), "table")
+		require.Contains(t, buf.String(), "ins")
+	})
+
+	t.Run("type filter", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := newRoot()
+		r.SetOut(&buf)
+		r.SetArgs([]string{"inspect", "--db", dsn, "--schemas", "public", "--type", "table"})
+		require.NoError(t, r.Execute())
+		require.Contains(t, buf.String(), "CREATE TABLE")
+	})
+
+	t.Run("out file", func(t *testing.T) {
+		outFile := filepath.Join(t.TempDir(), "schema.sql")
+		var buf bytes.Buffer
+		r := newRoot()
+		r.SetOut(&buf)
+		r.SetArgs([]string{"inspect", "--db", dsn, "--schemas", "public", "--out", outFile})
+		require.NoError(t, r.Execute())
+		require.Contains(t, buf.String(), "Wrote")
+		data, err := os.ReadFile(outFile)
+		require.NoError(t, err)
+		require.Contains(t, string(data), "CREATE TABLE")
+	})
 }
 
 func TestCmdApply_dryRun_embedded(t *testing.T) {

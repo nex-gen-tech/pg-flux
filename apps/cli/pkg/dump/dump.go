@@ -221,6 +221,52 @@ func countFiles(dir string, layout Layout, objs []object) int {
 	}
 }
 
+// ── inspect (read-only) ──────────────────────────────────────────────────────
+
+// InspectObject is a single rendered DDL chunk from InspectSQL.
+type InspectObject struct {
+	Kind   string // "tables", "views", "functions", "indexes", etc.
+	Schema string
+	Name   string
+	SQL    string
+}
+
+// InspectSQL connects to the database, renders every schema object to its
+// CREATE-style SQL, and returns the results without writing any files.
+// Objects are ordered by dependency (extensions → types → tables → indexes →
+// views → functions → triggers → …).
+func InspectSQL(ctx context.Context, pool *pgxpool.Pool, schemas []string) ([]InspectObject, error) {
+	if len(schemas) == 0 {
+		schemas = []string{"public"}
+	}
+	live, err := inspector.Inspect(ctx, pool, inspector.Options{Schemas: schemas})
+	if err != nil {
+		return nil, fmt.Errorf("inspect: %w", err)
+	}
+	pv, _ := pgver.Detect(ctx, pool)
+	objs := renderAll(live, pv)
+	sortObjectsByDep(objs)
+	out := make([]InspectObject, len(objs))
+	for i, o := range objs {
+		out[i] = InspectObject{Kind: o.Kind, Schema: o.Schema, Name: o.Name, SQL: o.SQL}
+	}
+	return out, nil
+}
+
+// sortObjectsByDep orders by (SortKey, Schema, Name) — dependency order first,
+// then alphabetically within each kind.
+func sortObjectsByDep(o []object) {
+	sort.SliceStable(o, func(i, j int) bool {
+		if o[i].SortKey != o[j].SortKey {
+			return o[i].SortKey < o[j].SortKey
+		}
+		if o[i].Schema != o[j].Schema {
+			return o[i].Schema < o[j].Schema
+		}
+		return o[i].Name < o[j].Name
+	})
+}
+
 // sortObjects stably orders objects by (Kind, SortKey, Schema, Name).
 func sortObjects(o []object) {
 	sort.SliceStable(o, func(i, j int) bool {

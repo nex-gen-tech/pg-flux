@@ -1309,10 +1309,23 @@ func cmdDrift() *cobra.Command {
 }
 
 func cmdInspect() *cobra.Command {
-	var out string
+	var (
+		typeFilter   string
+		objectFilter string
+		outFile      string
+		summary      bool
+	)
 	c := &cobra.Command{
 		Use:   "inspect",
-		Short: "Dump table DDL skeletons to --out (subset)",
+		Short: "Print every live schema object as CREATE-style SQL",
+		Long: "Connect to a database and print all schema objects as CREATE SQL.\n\n" +
+			"Outputs to stdout by default. Use --type and --object to narrow the result,\n" +
+			"or --summary for a quick inventory without full SQL.",
+		Example: "  pg-flux inspect\n" +
+			"  pg-flux inspect --type table\n" +
+			"  pg-flux inspect --type function --object normalize_email\n" +
+			"  pg-flux inspect --type view --out views.sql\n" +
+			"  pg-flux inspect --summary",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -1321,40 +1334,136 @@ func cmdInspect() *cobra.Command {
 				return err
 			}
 			defer pool.Close()
-			live, err := inspector.Inspect(ctx, pool, inspector.Options{Schemas: parseSchemas()})
+
+			objs, err := dump.InspectSQL(ctx, pool, parseSchemas())
 			if err != nil {
 				return err
 			}
-			_ = os.MkdirAll(out+"/tables", 0o755)
-			for k, t := range live.Tables {
-				if t == nil {
+
+			// Apply filters.
+			filtered := objs[:0:0]
+			for _, o := range objs {
+				if typeFilter != "" && !inspectKindMatch(o.Kind, typeFilter) {
 					continue
 				}
-				var b strings.Builder
-				fmt.Fprintf(&b, "CREATE TABLE %s (\n", t.Name)
-				for i, c := range t.Columns {
-					if c == nil {
-						continue
-					}
-					if i > 0 {
-						b.WriteString(",\n")
-					}
-					fmt.Fprintf(&b, "  %s %s", c.Name, c.TypeSQL)
-					if c.NotNull {
-						b.WriteString(" NOT NULL")
-					}
+				if objectFilter != "" && !inspectNameMatch(o.Schema+"."+o.Name, objectFilter) &&
+					!inspectNameMatch(o.Name, objectFilter) {
+					continue
 				}
-				b.WriteString("\n);\n")
-				safe := strings.NewReplacer(".", "_").Replace(k)
-				_ = os.WriteFile(out+"/tables/"+safe+".sql", []byte(b.String()), 0o644)
+				filtered = append(filtered, o)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Wrote table stubs under %s/tables/\n", out)
-			fmt.Fprintf(cmd.OutOrStdout(), "Note: if %s/ already contains .sql files that define the same tables,\ndelete or move the new stubs to avoid \"duplicate table definition\" errors.\n", out)
+
+			// Resolve output writer.
+			w := cmd.OutOrStdout()
+			if outFile != "" {
+				f, err := os.Create(outFile)
+				if err != nil {
+					return fmt.Errorf("open output file: %w", err)
+				}
+				defer f.Close()
+				w = f
+			}
+
+			if summary {
+				tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(tw, "TYPE\tSCHEMA\tNAME")
+				for _, o := range filtered {
+					fmt.Fprintf(tw, "%s\t%s\t%s\n", inspectKindSingular(o.Kind), o.Schema, o.Name)
+				}
+				_ = tw.Flush()
+				fmt.Fprintf(w, "\n%d object(s)\n", len(filtered))
+				return nil
+			}
+
+			// Full SQL output.
+			for _, o := range filtered {
+				fmt.Fprintln(w, o.SQL)
+			}
+			if outFile != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d object(s) to %s\n", len(filtered), outFile)
+			}
 			return nil
 		},
 	}
-	c.Flags().StringVar(&out, "out", "./schema", "output directory")
+	c.Flags().StringVar(&typeFilter, "type", "",
+		"filter by object type: table, view, function, index, enum, sequence, trigger, extension, policy, domain, composite, range, server, statistic")
+	c.Flags().StringVar(&objectFilter, "object", "",
+		"filter by name (exact match or * glob, e.g. --object 'users' or --object 'public.*')")
+	c.Flags().StringVar(&outFile, "out", "",
+		"write SQL to this file instead of stdout")
+	c.Flags().BoolVar(&summary, "summary", false,
+		"print an inventory table (type / schema / name) instead of full SQL")
 	return c
+}
+
+// inspectKindSingular maps the plural Kind strings used internally to their
+// singular display names.
+func inspectKindSingular(kind string) string {
+	m := map[string]string{
+		"tables":            "table",
+		"views":             "view",
+		"functions":         "function",
+		"indexes":           "index",
+		"sequences":         "sequence",
+		"triggers":          "trigger",
+		"extensions":        "extension",
+		"policies":          "policy",
+		"domains":           "domain",
+		"enums":             "enum",
+		"composites":        "composite",
+		"ranges":            "range",
+		"event_triggers":    "event_trigger",
+		"statistics":        "statistic",
+		"foreign_servers":   "server",
+		"foreign_tables":    "foreign_table",
+		"default_privileges": "default_privilege",
+	}
+	if s, ok := m[kind]; ok {
+		return s
+	}
+	return strings.TrimSuffix(kind, "s")
+}
+
+// inspectKindMatch returns true when the object's Kind matches the user-supplied
+// type filter. Handles both plural ("tables") and singular ("table") inputs and
+// common aliases (func, idx, seq, …).
+func inspectKindMatch(kind, filter string) bool {
+	// Resolve kind to its canonical singular form.
+	k := inspectKindSingular(kind)
+
+	// Normalise the user's filter: lower-case, strip trailing s if not in map.
+	f := strings.ToLower(strings.TrimSpace(filter))
+	if s := inspectKindSingular(f); s != f {
+		f = s // was a plural in the map
+	}
+
+	// Common aliases.
+	aliases := map[string]string{
+		"func":      "function",
+		"proc":      "function",
+		"procedure": "function",
+		"trig":      "trigger",
+		"seq":       "sequence",
+		"ext":       "extension",
+		"idx":       "index",
+		"type":      "enum",
+		"server":    "server",
+	}
+	if a, ok := aliases[f]; ok {
+		f = a
+	}
+	return k == f
+}
+
+// inspectNameMatch returns true if name matches pattern using * as wildcard.
+func inspectNameMatch(name, pattern string) bool {
+	name = strings.ToLower(name)
+	pattern = strings.ToLower(pattern)
+	if !strings.Contains(pattern, "*") {
+		return name == pattern
+	}
+	matched, _ := filepath.Match(pattern, name)
+	return matched
 }
 
 func runDiff() (*differ.DiffResult, error) {
